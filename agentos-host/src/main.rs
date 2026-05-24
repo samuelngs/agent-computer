@@ -44,7 +44,7 @@ pub struct Cli {
     height: u32,
 
     /// Display scale factor (2 = HiDPI/Retina)
-    #[arg(long, default_value = "2")]
+    #[arg(long, default_value = "1")]
     scale: u32,
 
     /// Shared directory (VirtioFS)

@@ -80,13 +80,40 @@ pub(crate) fn unminimize_window(state: &mut AgentCompositor, idx: usize) {
 }
 
 #[cfg(target_os = "linux")]
+fn near_any_window_edge(state: &AgentCompositor, location: Point<f64, Logical>) -> bool {
+    for window in state.space.elements() {
+        let loc = match state.space.element_location(window) {
+            Some(l) => l,
+            None => continue,
+        };
+        let geo = window.geometry();
+        let bx = (loc.x + geo.loc.x) as f64;
+        let by = (loc.y + geo.loc.y) as f64;
+        let bw = geo.size.w as f64;
+        let bh = geo.size.h as f64;
+        let dx_left = (location.x - bx).abs();
+        let dx_right = ((bx + bw) - location.x).abs();
+        let dy_top = (location.y - by).abs();
+        let dy_bottom = ((by + bh) - location.y).abs();
+        if dx_left < RESIZE_EDGE_THRESHOLD || dx_right < RESIZE_EDGE_THRESHOLD
+            || dy_top < RESIZE_EDGE_THRESHOLD || dy_bottom < RESIZE_EDGE_THRESHOLD
+        {
+            return true;
+        }
+        if location.x > bx && location.x < bx + bw && location.y > by && location.y < by + bh {
+            return false;
+        }
+    }
+    false
+}
+
 pub(crate) fn detect_resize_edge(
     state: &AgentCompositor,
     location: Point<f64, Logical>,
 ) -> Option<(Window, u32)> {
-    let windows: Vec<_> = state.space.elements().cloned().collect();
+    let windows: Vec<&Window> = state.space.elements().collect();
     for window in windows.iter().rev() {
-        let loc = state.space.element_location(window)?;
+        let loc = state.space.element_location(*window)?;
         let geo = window.geometry();
         let x = location.x;
         let y = location.y;
@@ -119,7 +146,7 @@ pub(crate) fn detect_resize_edge(
             if on_bottom { edges |= 2; }
             if on_left { edges |= 4; }
             if on_right { edges |= 8; }
-            return Some((window.clone(), edges));
+            return Some(((*window).clone(), edges));
         }
 
         let inside = dx_left > RESIZE_EDGE_THRESHOLD
@@ -176,11 +203,15 @@ pub(crate) fn handle_input(state: &mut AgentCompositor, event: InputEvent<Libinp
                         time: event.time_msec(),
                     },
                 );
-                let new_shape = detect_resize_edge(state, pos.to_f64())
-                    .map(|(_, edges)| edges_to_cursor_shape(edges))
-                    .unwrap_or(CursorShape::Default);
-                if new_shape != state.cursor_shape {
-                    state.cursor_shape = new_shape;
+                if near_any_window_edge(state, pos.to_f64()) || state.cursor_shape != CursorShape::Default {
+                    let new_shape = detect_resize_edge(state, pos.to_f64())
+                        .map(|(_, edges)| edges_to_cursor_shape(edges))
+                        .unwrap_or(CursorShape::Default);
+                    if new_shape != state.cursor_shape {
+                        state.cursor_shape = new_shape;
+                    }
+                } else if state.cursor_shape != CursorShape::Default {
+                    state.cursor_shape = CursorShape::Default;
                 }
                 queue_redraw(state);
             }
@@ -314,11 +345,15 @@ pub(crate) fn handle_input(state: &mut AgentCompositor, event: InputEvent<Libinp
                         time: event.time_msec(),
                     },
                 );
-                let new_shape = detect_resize_edge(state, pos)
-                    .map(|(_, edges)| edges_to_cursor_shape(edges))
-                    .unwrap_or(CursorShape::Default);
-                if new_shape != state.cursor_shape {
-                    state.cursor_shape = new_shape;
+                if near_any_window_edge(state, pos) || state.cursor_shape != CursorShape::Default {
+                    let new_shape = detect_resize_edge(state, pos)
+                        .map(|(_, edges)| edges_to_cursor_shape(edges))
+                        .unwrap_or(CursorShape::Default);
+                    if new_shape != state.cursor_shape {
+                        state.cursor_shape = new_shape;
+                    }
+                } else if state.cursor_shape != CursorShape::Default {
+                    state.cursor_shape = CursorShape::Default;
                 }
                 queue_redraw(state);
             }
