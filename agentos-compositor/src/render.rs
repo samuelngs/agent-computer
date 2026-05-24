@@ -161,7 +161,7 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
     let taskbar_y = (output_h - tb_h) as f64;
 
     let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
-    let mut new_buttons: Vec<(String, bool, bool, MemoryRenderBuffer)> = Vec::new();
+    let mut desired: Vec<(String, bool, bool)> = Vec::new();
     for window in state.space.elements() {
         let title = get_window_title(window);
         let is_focused = window
@@ -169,17 +169,34 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
             .map(|t| focused_surface.as_ref() == Some(t.wl_surface()))
             .unwrap_or(false);
         let label = if title.is_empty() { "Window".to_string() } else { title };
-        let (r, g, b) = if is_focused { (80, 80, 120) } else { (50, 50, 50) };
-        let btn_buf = create_solid_buffer(btn_w, btn_h, r, g, b, 255, s);
-        new_buttons.push((label, is_focused, false, btn_buf));
+        desired.push((label, is_focused, false));
     }
     for (window, _) in &state.minimized_windows {
         let title = get_window_title(window);
         let label = if title.is_empty() { "Window".to_string() } else { title };
-        let btn_buf = create_solid_buffer(btn_w, btn_h, 35, 35, 35, 255, s);
-        new_buttons.push((label, false, true, btn_buf));
+        desired.push((label, false, true));
     }
-    state.taskbar_buttons = new_buttons;
+    let taskbar_changed = desired.len() != state.taskbar_buttons.len()
+        || desired.iter().zip(state.taskbar_buttons.iter()).any(
+            |((label, focused, minimized), (cur_label, cur_focused, cur_minimized, _))| {
+                label != cur_label || focused != cur_focused || minimized != cur_minimized
+            },
+        );
+    if taskbar_changed {
+        let mut new_buttons: Vec<(String, bool, bool, MemoryRenderBuffer)> = Vec::new();
+        for (label, is_focused, is_minimized) in desired {
+            let (r, g, b) = if is_minimized {
+                (35, 35, 35)
+            } else if is_focused {
+                (80, 80, 120)
+            } else {
+                (50, 50, 50)
+            };
+            let btn_buf = create_solid_buffer(btn_w, btn_h, r, g, b, 255, s);
+            new_buttons.push((label, is_focused, is_minimized, btn_buf));
+        }
+        state.taskbar_buttons = new_buttons;
+    }
 
     for (i, (_, _, _, btn_buf)) in state.taskbar_buttons.iter().enumerate() {
         let x = (btn_margin + i as i32 * (btn_w + btn_gap)) as f64;
