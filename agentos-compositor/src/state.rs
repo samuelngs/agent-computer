@@ -183,7 +183,9 @@ pub struct AgentCompositor {
     pub redraw_state: RedrawState,
 
     pub taskbar_bg: MemoryRenderBuffer,
-    pub taskbar_buttons: Vec<(String, bool, MemoryRenderBuffer)>,
+    pub taskbar_buttons: Vec<(String, bool, bool, MemoryRenderBuffer)>,
+
+    pub minimized_windows: Vec<(Window, Point<i32, Logical>)>,
 
     pub wayland_display: String,
     pub mcp_tx: calloop::channel::Sender<crate::mcp::McpCommand>,
@@ -361,6 +363,21 @@ impl XdgShellHandler for AgentCompositor {
         queue_redraw(self);
     }
 
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        let window = self
+            .space
+            .elements()
+            .find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == surface.wl_surface())
+                    .unwrap_or(false)
+            })
+            .cloned();
+        if let Some(window) = window {
+            minimize_window(self, &window);
+        }
+    }
+
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
     fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {}
     fn reposition_request(
@@ -369,6 +386,14 @@ impl XdgShellHandler for AgentCompositor {
         _positioner: PositionerState,
         _token: u32,
     ) {
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.minimized_windows.retain(|(w, _)| {
+            w.toplevel()
+                .map(|t| t.wl_surface() != surface.wl_surface())
+                .unwrap_or(true)
+        });
     }
 }
 
@@ -1048,6 +1073,7 @@ pub fn run() -> Result<()> {
         redraw_state: RedrawState::Idle,
         taskbar_bg,
         taskbar_buttons: Vec::new(),
+        minimized_windows: Vec::new(),
         wayland_display: socket_name.clone(),
         mcp_tx,
     };
@@ -1101,6 +1127,32 @@ pub fn run() -> Result<()> {
     })?;
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn minimize_window(state: &mut AgentCompositor, window: &Window) {
+    let loc = state.space.element_location(window).unwrap_or_default();
+    state.space.unmap_elem(window);
+    state.minimized_windows.push((window.clone(), loc));
+    if let Some(keyboard) = state.seat.get_keyboard() {
+        let next_focus = state.space.elements().next().and_then(|w| {
+            w.toplevel().map(|t| t.wl_surface().clone())
+        });
+        keyboard.set_focus(state, next_focus, SERIAL_COUNTER.next_serial());
+    }
+    queue_redraw(state);
+}
+
+#[cfg(target_os = "linux")]
+fn unminimize_window(state: &mut AgentCompositor, idx: usize) {
+    let (window, loc) = state.minimized_windows.remove(idx);
+    state.space.map_element(window.clone(), loc, true);
+    state.space.raise_element(&window, true);
+    if let Some(keyboard) = state.seat.get_keyboard() {
+        let surface = window.toplevel().map(|t| t.wl_surface().clone());
+        keyboard.set_focus(state, surface, SERIAL_COUNTER.next_serial());
+    }
+    queue_redraw(state);
 }
 
 #[cfg(target_os = "linux")]
@@ -1186,10 +1238,9 @@ fn render_frame(state: &mut AgentCompositor) {
     let output_h = state.output.current_mode().map(|m| m.size.h).unwrap_or(1080);
     let taskbar_y = (output_h - TASKBAR_HEIGHT) as f64;
 
-    let windows: Vec<_> = state.space.elements().cloned().collect();
     let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
-    let mut new_buttons = Vec::new();
-    for window in &windows {
+    let mut new_buttons: Vec<(String, bool, bool, MemoryRenderBuffer)> = Vec::new();
+    for window in state.space.elements() {
         let title = get_window_title(window);
         let is_focused = window
             .toplevel()
@@ -1198,11 +1249,17 @@ fn render_frame(state: &mut AgentCompositor) {
         let label = if title.is_empty() { "Window".to_string() } else { title };
         let (r, g, b) = if is_focused { (80, 80, 120) } else { (50, 50, 50) };
         let btn_buf = create_solid_buffer(TASKBAR_BTN_WIDTH, TASKBAR_BTN_HEIGHT, r, g, b, 255);
-        new_buttons.push((label, is_focused, btn_buf));
+        new_buttons.push((label, is_focused, false, btn_buf));
+    }
+    for (window, _) in &state.minimized_windows {
+        let title = get_window_title(window);
+        let label = if title.is_empty() { "Window".to_string() } else { title };
+        let btn_buf = create_solid_buffer(TASKBAR_BTN_WIDTH, TASKBAR_BTN_HEIGHT, 35, 35, 35, 255);
+        new_buttons.push((label, false, true, btn_buf));
     }
     state.taskbar_buttons = new_buttons;
 
-    for (i, (_, _, btn_buf)) in state.taskbar_buttons.iter().enumerate() {
+    for (i, (_, _, _, btn_buf)) in state.taskbar_buttons.iter().enumerate() {
         let x = (TASKBAR_BTN_MARGIN + i as i32 * (TASKBAR_BTN_WIDTH + TASKBAR_BTN_GAP)) as f64;
         let y = taskbar_y + ((TASKBAR_HEIGHT - TASKBAR_BTN_HEIGHT) / 2) as f64;
         if let Ok(btn) = MemoryRenderBufferRenderElement::from_buffer(
@@ -1283,7 +1340,7 @@ pub fn handle_mcp_tool(
     match tool {
         ToolCall::WindowList => {
             let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
-            let windows: Vec<WindowInfo> = state
+            let mut windows: Vec<WindowInfo> = state
                 .space
                 .elements()
                 .enumerate()
@@ -1306,14 +1363,34 @@ pub fn handle_mcp_tool(
                         width: size.w as u32,
                         height: size.h as u32,
                         focused: is_focused,
+                        minimized: false,
                     }
                 })
                 .collect();
+            let base_id = windows.len();
+            for (i, (window, loc)) in state.minimized_windows.iter().enumerate() {
+                let size = window
+                    .toplevel()
+                    .and_then(|t| t.current_state().size)
+                    .unwrap_or_default();
+                let title = get_window_title(window);
+                windows.push(WindowInfo {
+                    id: (base_id + i) as u64,
+                    title,
+                    x: loc.x,
+                    y: loc.y,
+                    width: size.w as u32,
+                    height: size.h as u32,
+                    focused: false,
+                    minimized: true,
+                });
+            }
             serde_json::json!({ "windows": windows })
         }
 
         ToolCall::WindowFocus { id } => {
             let windows: Vec<Window> = state.space.elements().cloned().collect();
+            let visible_count = windows.len();
             if let Some(window) = windows.get(id as usize) {
                 state.space.raise_element(window, true);
                 if let Some(keyboard) = state.seat.get_keyboard() {
@@ -1323,7 +1400,13 @@ pub fn handle_mcp_tool(
                 queue_redraw(state);
                 serde_json::json!({ "focused": id })
             } else {
-                serde_json::json!({ "error": "window not found" })
+                let min_idx = id as usize - visible_count;
+                if min_idx < state.minimized_windows.len() {
+                    unminimize_window(state, min_idx);
+                    serde_json::json!({ "focused": id })
+                } else {
+                    serde_json::json!({ "error": "window not found" })
+                }
             }
         }
 
@@ -1382,6 +1465,7 @@ pub fn handle_mcp_tool(
 
         ToolCall::WindowClose { id } => {
             let windows: Vec<Window> = state.space.elements().cloned().collect();
+            let visible_count = windows.len();
             if let Some(window) = windows.get(id as usize) {
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.send_close();
@@ -1389,7 +1473,36 @@ pub fn handle_mcp_tool(
                 }
                 serde_json::json!({ "closed": id })
             } else {
-                serde_json::json!({ "error": "window not found" })
+                let min_idx = id as usize - visible_count;
+                if min_idx < state.minimized_windows.len() {
+                    let (window, _) = &state.minimized_windows[min_idx];
+                    if let Some(toplevel) = window.toplevel() {
+                        toplevel.send_close();
+                    }
+                    state.minimized_windows.remove(min_idx);
+                    queue_redraw(state);
+                    serde_json::json!({ "closed": id })
+                } else {
+                    serde_json::json!({ "error": "window not found" })
+                }
+            }
+        }
+
+        ToolCall::WindowMinimize { id } => {
+            let visible: Vec<Window> = state.space.elements().cloned().collect();
+            let visible_count = visible.len();
+            if (id as usize) < visible_count {
+                let window = &visible[id as usize];
+                minimize_window(state, window);
+                serde_json::json!({ "minimized": id })
+            } else {
+                let min_idx = id as usize - visible_count;
+                if min_idx < state.minimized_windows.len() {
+                    unminimize_window(state, min_idx);
+                    serde_json::json!({ "unminimized": id })
+                } else {
+                    serde_json::json!({ "error": "window not found" })
+                }
             }
         }
 
@@ -1738,7 +1851,7 @@ fn capture_screen(state: &mut AgentCompositor) -> Result<(u32, u32, String)> {
         elements.push(OutputRenderElements::Cursor(bg));
     }
 
-    for (i, (_, _, btn_buf)) in state.taskbar_buttons.iter().enumerate() {
+    for (i, (_, _, _, btn_buf)) in state.taskbar_buttons.iter().enumerate() {
         let x = (TASKBAR_BTN_MARGIN + i as i32 * (TASKBAR_BTN_WIDTH + TASKBAR_BTN_GAP)) as f64;
         let y = taskbar_y + ((TASKBAR_HEIGHT - TASKBAR_BTN_HEIGHT) / 2) as f64;
         if let Ok(btn) = MemoryRenderBufferRenderElement::from_buffer(
@@ -1910,17 +2023,35 @@ fn handle_input(state: &mut AgentCompositor, event: InputEvent<LibinputInputBack
                 let taskbar_y = output_h - TASKBAR_HEIGHT as f64;
 
                 if location.y >= taskbar_y {
-                    // Taskbar click — find which button
                     let btn_x = location.x - TASKBAR_BTN_MARGIN as f64;
                     let idx = (btn_x / (TASKBAR_BTN_WIDTH + TASKBAR_BTN_GAP) as f64) as usize;
-                    let windows: Vec<Window> = state.space.elements().cloned().collect();
-                    if let Some(window) = windows.get(idx) {
-                        state.space.raise_element(window, true);
-                        if let Some(keyboard) = state.seat.get_keyboard() {
-                            let surface = window.toplevel().map(|t| t.wl_surface().clone());
-                            keyboard.set_focus(state, surface, serial);
+                    let visible: Vec<Window> = state.space.elements().cloned().collect();
+                    let visible_count = visible.len();
+                    if idx < visible_count {
+                        let window = &visible[idx];
+                        let is_focused = window
+                            .toplevel()
+                            .map(|t| {
+                                state.seat.get_keyboard()
+                                    .and_then(|kb| kb.current_focus())
+                                    .as_ref() == Some(t.wl_surface())
+                            })
+                            .unwrap_or(false);
+                        if is_focused {
+                            minimize_window(state, window);
+                        } else {
+                            state.space.raise_element(window, true);
+                            if let Some(keyboard) = state.seat.get_keyboard() {
+                                let surface = window.toplevel().map(|t| t.wl_surface().clone());
+                                keyboard.set_focus(state, surface, serial);
+                            }
+                            queue_redraw(state);
                         }
-                        queue_redraw(state);
+                    } else {
+                        let min_idx = idx - visible_count;
+                        if min_idx < state.minimized_windows.len() {
+                            unminimize_window(state, min_idx);
+                        }
                     }
                 } else if let Some((window, edges)) = detect_resize_edge(state, location) {
                     // Edge resize

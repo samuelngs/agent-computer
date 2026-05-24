@@ -85,6 +85,8 @@ pub enum ToolCall {
     WindowOpen { cmd: String },
     #[serde(rename = "window_close")]
     WindowClose { id: u64 },
+    #[serde(rename = "window_minimize")]
+    WindowMinimize { id: u64 },
     #[serde(rename = "shell_exec")]
     ShellExec { cmd: String },
     #[serde(rename = "file_read")]
@@ -118,6 +120,7 @@ pub struct WindowInfo {
     pub width: u32,
     pub height: u32,
     pub focused: bool,
+    pub minimized: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
