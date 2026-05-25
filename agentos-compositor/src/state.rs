@@ -143,6 +143,7 @@ pub(crate) struct AgentCompositor {
 
     pub(crate) popup_manager: PopupManager,
     pub(crate) minimized_windows: Vec<(Window, Point<i32, Logical>)>,
+    pub(crate) window_order: Vec<Window>,
 
     pub(crate) scale_factor: i32,
 
@@ -205,7 +206,8 @@ impl XdgShellHandler for AgentCompositor {
         });
         surface.send_configure();
         let window = Window::new_wayland_window(surface);
-        self.space.map_element(window, (0, 0), false);
+        self.space.map_element(window.clone(), (0, 0), false);
+        self.window_order.push(window);
         tracing::info!("new toplevel window mapped");
     }
 
@@ -363,6 +365,11 @@ impl XdgShellHandler for AgentCompositor {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.minimized_windows.retain(|(w, _)| {
+            w.toplevel()
+                .map(|t| t.wl_surface() != surface.wl_surface())
+                .unwrap_or(true)
+        });
+        self.window_order.retain(|w| {
             w.toplevel()
                 .map(|t| t.wl_surface() != surface.wl_surface())
                 .unwrap_or(true)
@@ -701,6 +708,7 @@ pub fn run() -> Result<()> {
         taskbar_buttons: Vec::new(),
         popup_manager: PopupManager::default(),
         minimized_windows: Vec::new(),
+        window_order: Vec::new(),
         scale_factor,
         wayland_display: socket_name.clone(),
         mcp_tx,

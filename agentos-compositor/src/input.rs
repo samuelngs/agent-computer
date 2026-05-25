@@ -107,6 +107,7 @@ fn near_any_window_edge(state: &AgentCompositor, location: Point<f64, Logical>) 
     false
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn detect_resize_edge(
     state: &AgentCompositor,
     location: Point<f64, Logical>,
@@ -231,32 +232,41 @@ pub(crate) fn handle_input(state: &mut AgentCompositor, event: InputEvent<Libinp
                 if location.y >= taskbar_y {
                     let btn_x = location.x - taskbar_btn_margin(1) as f64;
                     let idx = (btn_x / (taskbar_btn_width(1) + taskbar_btn_gap(1)) as f64) as usize;
-                    let visible: Vec<Window> = state.space.elements().cloned().collect();
-                    let visible_count = visible.len();
-                    if idx < visible_count {
-                        let window = &visible[idx];
-                        let is_focused = window
-                            .toplevel()
-                            .map(|t| {
-                                state.seat.get_keyboard()
-                                    .and_then(|kb| kb.current_focus())
-                                    .as_ref() == Some(t.wl_surface())
-                            })
-                            .unwrap_or(false);
-                        if is_focused {
-                            minimize_window(state, window);
-                        } else {
-                            state.space.raise_element(window, true);
-                            if let Some(keyboard) = state.seat.get_keyboard() {
-                                let surface = window.toplevel().map(|t| t.wl_surface().clone());
-                                keyboard.set_focus(state, surface, serial);
+                    let ordered: Vec<(Window, bool)> = state.window_order.iter()
+                        .filter_map(|w| {
+                            if state.minimized_windows.iter().any(|(mw, _)| mw == w) {
+                                Some((w.clone(), true))
+                            } else if state.space.elements().any(|e| e == w) {
+                                Some((w.clone(), false))
+                            } else {
+                                None
                             }
-                            queue_redraw(state);
-                        }
-                    } else {
-                        let min_idx = idx - visible_count;
-                        if min_idx < state.minimized_windows.len() {
+                        })
+                        .collect();
+                    if idx < ordered.len() {
+                        let (window, is_minimized) = &ordered[idx];
+                        if *is_minimized {
+                            let min_idx = state.minimized_windows.iter()
+                                .position(|(w, _)| w == window)
+                                .unwrap();
                             unminimize_window(state, min_idx);
+                        } else {
+                            let is_focused = window
+                                .toplevel()
+                                .map(|t| {
+                                    state.seat.get_keyboard()
+                                        .and_then(|kb| kb.current_focus())
+                                        .as_ref() == Some(t.wl_surface())
+                                })
+                                .unwrap_or(false);
+                            if !is_focused {
+                                state.space.raise_element(window, true);
+                                if let Some(keyboard) = state.seat.get_keyboard() {
+                                    let surface = window.toplevel().map(|t| t.wl_surface().clone());
+                                    keyboard.set_focus(state, surface, serial);
+                                }
+                                queue_redraw(state);
+                            }
                         }
                     }
                     return;

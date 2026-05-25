@@ -1,5 +1,6 @@
 mod bitmap;
 mod cursor;
+mod font;
 mod grabs;
 mod input;
 mod mcp;

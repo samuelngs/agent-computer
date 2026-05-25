@@ -38,6 +38,9 @@ use super::state::AgentCompositor;
 use super::taskbar::get_window_title;
 
 #[cfg(target_os = "linux")]
+use super::font;
+
+#[cfg(target_os = "linux")]
 smithay::backend::renderer::element::render_elements! {
     pub(crate) OutputRenderElements<R, E> where R: ImportAll + ImportMem;
     Space=SpaceRenderElements<R, E>,
@@ -88,6 +91,33 @@ pub(crate) enum RedrawState {
 #[cfg(target_os = "linux")]
 pub(crate) fn create_solid_buffer(w: i32, h: i32, r: u8, g: u8, b: u8, a: u8, scale: i32) -> MemoryRenderBuffer {
     let data = vec![[r, g, b, a]; (w * h) as usize].into_iter().flatten().collect::<Vec<u8>>();
+    MemoryRenderBuffer::from_slice(
+        &data,
+        DrmFourcc::Abgr8888,
+        (w, h),
+        scale,
+        Transform::Normal,
+        None,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn create_label_buffer(
+    w: i32,
+    h: i32,
+    bg_r: u8,
+    bg_g: u8,
+    bg_b: u8,
+    text: &str,
+    font_size: f32,
+    padding_x: i32,
+    scale: i32,
+) -> MemoryRenderBuffer {
+    let mut data = vec![[bg_r, bg_g, bg_b, 255u8]; (w * h) as usize]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<u8>>();
+    font::render_text_onto(&mut data, w, h, text, font_size, 220, 220, 220, padding_x);
     MemoryRenderBuffer::from_slice(
         &data,
         DrmFourcc::Abgr8888,
@@ -162,19 +192,23 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
 
     let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
     let mut desired: Vec<(String, bool, bool)> = Vec::new();
-    for window in state.space.elements() {
-        let title = get_window_title(window);
-        let is_focused = window
-            .toplevel()
-            .map(|t| focused_surface.as_ref() == Some(t.wl_surface()))
-            .unwrap_or(false);
-        let label = if title.is_empty() { "Window".to_string() } else { title };
-        desired.push((label, is_focused, false));
-    }
-    for (window, _) in &state.minimized_windows {
+    for window in &state.window_order {
+        let is_minimized = state.minimized_windows.iter().any(|(w, _)| w == window);
+        let is_visible = state.space.elements().any(|w| w == window);
+        if !is_minimized && !is_visible {
+            continue;
+        }
         let title = get_window_title(window);
         let label = if title.is_empty() { "Window".to_string() } else { title };
-        desired.push((label, false, true));
+        if is_minimized {
+            desired.push((label, false, true));
+        } else {
+            let is_focused = window
+                .toplevel()
+                .map(|t| focused_surface.as_ref() == Some(t.wl_surface()))
+                .unwrap_or(false);
+            desired.push((label, is_focused, false));
+        }
     }
     let taskbar_changed = desired.len() != state.taskbar_buttons.len()
         || desired.iter().zip(state.taskbar_buttons.iter()).any(
@@ -184,6 +218,8 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
         );
     if taskbar_changed {
         let mut new_buttons: Vec<(String, bool, bool, MemoryRenderBuffer)> = Vec::new();
+        let font_size = 13.0 * s as f32;
+        let text_pad = 8 * s;
         for (label, is_focused, is_minimized) in desired {
             let (r, g, b) = if is_minimized {
                 (35, 35, 35)
@@ -192,7 +228,7 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
             } else {
                 (50, 50, 50)
             };
-            let btn_buf = create_solid_buffer(btn_w, btn_h, r, g, b, 255, s);
+            let btn_buf = create_label_buffer(btn_w, btn_h, r, g, b, &label, font_size, text_pad, s);
             new_buttons.push((label, is_focused, is_minimized, btn_buf));
         }
         state.taskbar_buttons = new_buttons;
