@@ -54,7 +54,7 @@ pub(crate) fn handle_mcp_tool(
                 format!("$ {cmd}")
             };
 
-            let result = std::process::Command::new("foot")
+            let result = std::process::Command::new("alacritty")
                 .args(["-T", &title, "-e", "sh", "-c", &shell_cmd])
                 .env("WAYLAND_DISPLAY", &wayland_display)
                 .env("XDG_RUNTIME_DIR", &xdg_runtime_dir)
@@ -85,7 +85,7 @@ pub(crate) fn handle_mcp_tool(
                     return None;
                 }
                 Err(e) => {
-                    Some(serde_json::json!({ "error": format!("foot launch failed: {e}") }))
+                    Some(serde_json::json!({ "error": format!("alacritty launch failed: {e}") }))
                 }
             }
         }
@@ -496,7 +496,7 @@ fn open_in_editor(state: &mut AgentCompositor, path: &str, line: Option<u32>) {
         }
         args.push(path.to_string());
 
-        match std::process::Command::new("foot")
+        match std::process::Command::new("alacritty")
             .args(&args)
             .env("WAYLAND_DISPLAY", &wayland_display)
             .env("XDG_RUNTIME_DIR", &xdg_runtime_dir)

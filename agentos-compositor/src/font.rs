@@ -6,10 +6,10 @@ static FONT: OnceLock<fontdue::Font> = OnceLock::new();
 
 #[cfg(target_os = "linux")]
 const FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf",
+    "/usr/share/fonts/jetbrains-mono/JetBrainsMono-Medium.ttf",
     "/usr/share/fonts/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/noto/NotoSans-Medium.ttf",
-    "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
-    "/usr/share/fonts/TTF/NotoSans-Regular.ttf",
 ];
 
 #[cfg(target_os = "linux")]

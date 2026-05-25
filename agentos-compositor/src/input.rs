@@ -18,7 +18,7 @@ use smithay::{
 use super::grabs::ResizeSurfaceGrab;
 
 #[cfg(target_os = "linux")]
-use super::render::{queue_redraw, taskbar_height, taskbar_btn_width, taskbar_btn_gap, taskbar_btn_margin};
+use super::render::{queue_redraw, taskbar_height, taskbar_btn_width, taskbar_btn_gap, taskbar_btn_margin, SSD_TITLE_BAR_HEIGHT};
 #[cfg(target_os = "linux")]
 use super::state::AgentCompositor;
 
@@ -91,17 +91,20 @@ fn near_any_window_edge(state: &AgentCompositor, location: Point<f64, Logical>) 
         let by = (loc.y + geo.loc.y) as f64;
         let bw = geo.size.w as f64;
         let bh = geo.size.h as f64;
-        let dx_left = (location.x - bx).abs();
-        let dx_right = ((bx + bw) - location.x).abs();
-        let dy_top = (location.y - by).abs();
-        let dy_bottom = ((by + bh) - location.y).abs();
-        if dx_left < RESIZE_EDGE_THRESHOLD || dx_right < RESIZE_EDGE_THRESHOLD
-            || dy_top < RESIZE_EDGE_THRESHOLD || dy_bottom < RESIZE_EDGE_THRESHOLD
-        {
-            return true;
-        }
-        if location.x > bx && location.x < bx + bw && location.y > by && location.y < by + bh {
+        let dx_left = location.x - bx;
+        let dx_right = (bx + bw) - location.x;
+        let dy_top = location.y - by;
+        let dy_bottom = (by + bh) - location.y;
+        let inside = dx_left > 0.0 && dx_right > 0.0 && dy_top > 0.0 && dy_bottom > 0.0;
+        if inside {
             return false;
+        }
+        let near = (dx_left < 0.0 && dx_left > -RESIZE_EDGE_THRESHOLD)
+            || (dx_right < 0.0 && dx_right > -RESIZE_EDGE_THRESHOLD)
+            || (dy_top < 0.0 && dy_top > -RESIZE_EDGE_THRESHOLD)
+            || (dy_bottom < 0.0 && dy_bottom > -RESIZE_EDGE_THRESHOLD);
+        if near {
+            return true;
         }
     }
     false
@@ -136,10 +139,10 @@ pub(crate) fn detect_resize_edge(
             continue;
         }
 
-        let on_left = dx_left.abs() < RESIZE_EDGE_THRESHOLD;
-        let on_right = dx_right.abs() < RESIZE_EDGE_THRESHOLD;
-        let on_top = dy_top.abs() < RESIZE_EDGE_THRESHOLD;
-        let on_bottom = dy_bottom.abs() < RESIZE_EDGE_THRESHOLD;
+        let on_left = dx_left < 0.0 && dx_left > -RESIZE_EDGE_THRESHOLD;
+        let on_right = dx_right < 0.0 && dx_right > -RESIZE_EDGE_THRESHOLD;
+        let on_top = dy_top < 0.0 && dy_top > -RESIZE_EDGE_THRESHOLD;
+        let on_bottom = dy_bottom < 0.0 && dy_bottom > -RESIZE_EDGE_THRESHOLD;
 
         if on_left || on_right || on_top || on_bottom {
             let mut edges = 0u32;
@@ -156,6 +159,65 @@ pub(crate) fn detect_resize_edge(
             && dy_bottom > RESIZE_EDGE_THRESHOLD;
         if inside {
             return None;
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+const SSD_EDGE: f64 = 6.0;
+
+#[cfg(target_os = "linux")]
+enum SsdHit {
+    TitleBar(Window),
+    ResizeEdge(Window, u32),
+}
+
+#[cfg(target_os = "linux")]
+fn ssd_hit_test(state: &AgentCompositor, location: Point<f64, Logical>) -> Option<SsdHit> {
+    let windows: Vec<_> = state.space.elements().cloned().collect();
+    for window in windows.iter().rev() {
+        if !state.is_ssd(window) {
+            continue;
+        }
+        let loc = match state.space.element_location(window) {
+            Some(l) => l,
+            None => continue,
+        };
+        let geo = window.geometry();
+        let win_w = geo.size.w as f64;
+        let win_h = geo.size.h as f64;
+        let title_h = SSD_TITLE_BAR_HEIGHT as f64;
+        let top_y = loc.y as f64 - title_h;
+        let left_x = loc.x as f64;
+        let right_x = left_x + win_w;
+        let bottom_y = loc.y as f64 + win_h;
+
+        let x = location.x;
+        let y = location.y;
+
+        if x < left_x - SSD_EDGE || x > right_x + SSD_EDGE
+            || y < top_y - SSD_EDGE || y > bottom_y + SSD_EDGE
+        {
+            continue;
+        }
+
+        let on_left = x >= left_x - SSD_EDGE && x < left_x;
+        let on_right = x > right_x && x <= right_x + SSD_EDGE;
+        let on_top = y >= top_y - SSD_EDGE && y < top_y;
+        let on_bottom = y > bottom_y && y <= bottom_y + SSD_EDGE;
+
+        if on_left || on_right || on_top || on_bottom {
+            let mut edges = 0u32;
+            if on_top || (y < top_y + SSD_EDGE && (on_left || on_right)) { edges |= 1; }
+            if on_bottom || (y > bottom_y - SSD_EDGE && (on_left || on_right)) { edges |= 2; }
+            if on_left { edges |= 4; }
+            if on_right { edges |= 8; }
+            return Some(SsdHit::ResizeEdge(window.clone(), edges));
+        }
+
+        if y >= top_y && y < loc.y as f64 && x >= left_x && x <= right_x {
+            return Some(SsdHit::TitleBar(window.clone()));
         }
     }
     None
@@ -204,15 +266,12 @@ pub(crate) fn handle_input(state: &mut AgentCompositor, event: InputEvent<Libinp
                         time: event.time_msec(),
                     },
                 );
-                if near_any_window_edge(state, pos.to_f64()) || state.cursor_shape != CursorShape::Default {
-                    let new_shape = detect_resize_edge(state, pos.to_f64())
-                        .map(|(_, edges)| edges_to_cursor_shape(edges))
-                        .unwrap_or(CursorShape::Default);
-                    if new_shape != state.cursor_shape {
-                        state.cursor_shape = new_shape;
-                    }
-                } else if state.cursor_shape != CursorShape::Default {
-                    state.cursor_shape = CursorShape::Default;
+                let new_shape = match ssd_hit_test(state, pos.to_f64()) {
+                    Some(SsdHit::ResizeEdge(_, edges)) => edges_to_cursor_shape(edges),
+                    _ => CursorShape::Default,
+                };
+                if new_shape != state.cursor_shape {
+                    state.cursor_shape = new_shape;
                 }
                 queue_redraw(state);
             }
@@ -270,27 +329,59 @@ pub(crate) fn handle_input(state: &mut AgentCompositor, event: InputEvent<Libinp
                         }
                     }
                     return;
-                } else if let Some((window, edges)) = detect_resize_edge(state, location) {
-                    let initial_loc = state.space.element_location(&window).unwrap_or_default();
-                    let initial_size = window
-                        .toplevel()
-                        .and_then(|t| t.current_state().size)
-                        .unwrap_or((800, 600).into());
-                    let pointer = state.pointer.clone();
-                    let start_data = GrabStartData {
-                        focus: None,
-                        button: button_code,
-                        location,
-                    };
-                    let grab = ResizeSurfaceGrab {
-                        window,
-                        start_data,
-                        edges,
-                        initial_size,
-                        initial_loc,
-                    };
-                    pointer.set_grab(state, grab, serial, Focus::Clear);
-                    return;
+                }
+            }
+
+            if is_left && event.state() == smithay::backend::input::ButtonState::Pressed {
+                let location = pointer.current_location();
+                if let Some(hit) = ssd_hit_test(state, location) {
+                    match hit {
+                        SsdHit::TitleBar(window) => {
+                            state.space.raise_element(&window, true);
+                            if let Some(keyboard) = state.seat.get_keyboard() {
+                                let surface = window.toplevel().map(|t| t.wl_surface().clone());
+                                keyboard.set_focus(state, surface, serial);
+                            }
+                            let initial_loc = state.space.element_location(&window).unwrap_or_default();
+                            let start_data = GrabStartData {
+                                focus: None,
+                                button: 0x110,
+                                location,
+                            };
+                            let grab = crate::grabs::MoveSurfaceGrab {
+                                window,
+                                start_data,
+                                initial_loc,
+                            };
+                            pointer.set_grab(state, grab, serial, Focus::Clear);
+                            return;
+                        }
+                        SsdHit::ResizeEdge(window, edges) => {
+                            state.space.raise_element(&window, true);
+                            if let Some(keyboard) = state.seat.get_keyboard() {
+                                let surface = window.toplevel().map(|t| t.wl_surface().clone());
+                                keyboard.set_focus(state, surface, serial);
+                            }
+                            let initial_loc = state.space.element_location(&window).unwrap_or_default();
+                            let initial_size = window.toplevel()
+                                .and_then(|t| t.current_state().size)
+                                .unwrap_or((800, 600).into());
+                            let start_data = GrabStartData {
+                                focus: None,
+                                button: 0x110,
+                                location,
+                            };
+                            let grab = crate::grabs::ResizeSurfaceGrab {
+                                window,
+                                start_data,
+                                edges,
+                                initial_size,
+                                initial_loc,
+                            };
+                            pointer.set_grab(state, grab, serial, Focus::Clear);
+                            return;
+                        }
+                    }
                 }
             }
 
@@ -355,15 +446,12 @@ pub(crate) fn handle_input(state: &mut AgentCompositor, event: InputEvent<Libinp
                         time: event.time_msec(),
                     },
                 );
-                if near_any_window_edge(state, pos) || state.cursor_shape != CursorShape::Default {
-                    let new_shape = detect_resize_edge(state, pos)
-                        .map(|(_, edges)| edges_to_cursor_shape(edges))
-                        .unwrap_or(CursorShape::Default);
-                    if new_shape != state.cursor_shape {
-                        state.cursor_shape = new_shape;
-                    }
-                } else if state.cursor_shape != CursorShape::Default {
-                    state.cursor_shape = CursorShape::Default;
+                let new_shape = match ssd_hit_test(state, pos) {
+                    Some(SsdHit::ResizeEdge(_, edges)) => edges_to_cursor_shape(edges),
+                    _ => CursorShape::Default,
+                };
+                if new_shape != state.cursor_shape {
+                    state.cursor_shape = new_shape;
                 }
                 queue_redraw(state);
             }

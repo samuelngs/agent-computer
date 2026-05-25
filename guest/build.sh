@@ -65,8 +65,9 @@ apk add --root /rootfs --initdb --no-cache \
     adwaita-icon-theme \
     xwayland \
     wlr-randr \
-    foot \
+    alacritty \
     neovim \
+    font-jetbrains-mono \
     bash \
     curl \
     iputils \
@@ -118,6 +119,7 @@ echo "agentos:agentos" | chroot /rootfs /usr/sbin/chpasswd 2>/dev/null || true
 mkdir -p /rootfs/etc/sudoers.d
 echo "agentos ALL=(ALL) NOPASSWD: ALL" > /rootfs/etc/sudoers.d/agentos
 chmod 440 /rootfs/etc/sudoers.d/agentos
+chown -R 1000:1000 /rootfs/home/agentos
 
 # iputils provides /bin/ping with cap_net_raw; ping_group_range sysctl
 # set in fast-init allows unprivileged ICMP as fallback

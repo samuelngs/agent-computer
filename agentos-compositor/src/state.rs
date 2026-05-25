@@ -54,6 +54,7 @@ use smithay::{
         },
         shell::xdg::{
             PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+            decoration::{XdgDecorationHandler, XdgDecorationState},
         },
         shm::{ShmHandler, ShmState},
         socket::ListeningSocketSource,
@@ -61,6 +62,8 @@ use smithay::{
 };
 
 #[cfg(target_os = "linux")]
+use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
+
 use std::{
     collections::HashSet,
     os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
@@ -115,6 +118,7 @@ pub(crate) struct AgentCompositor {
 
     pub(crate) compositor_state: CompositorState,
     pub(crate) xdg_shell_state: XdgShellState,
+    pub(crate) xdg_decoration_state: XdgDecorationState,
     pub(crate) shm_state: ShmState,
     pub(crate) seat_state: SeatState<Self>,
     pub(crate) data_device_state: DataDeviceState,
@@ -147,6 +151,7 @@ pub(crate) struct AgentCompositor {
     pub(crate) window_order: Vec<Window>,
 
     pub(crate) scale_factor: i32,
+    pub(crate) ssd_windows: HashSet<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
 
     pub(crate) wayland_display: String,
     pub(crate) mcp_tx: calloop::channel::Sender<crate::mcp::McpCommand>,
@@ -194,6 +199,12 @@ impl AgentCompositor {
             (-parent_global.x, -parent_global.y).into(),
             (logical_w, logical_h).into(),
         )
+    }
+
+    pub(crate) fn is_ssd(&self, window: &Window) -> bool {
+        window.toplevel()
+            .map(|t| self.ssd_windows.contains(t.wl_surface()))
+            .unwrap_or(false)
     }
 
     fn pick_window_position(
@@ -491,6 +502,7 @@ impl XdgShellHandler for AgentCompositor {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.ssd_windows.remove(surface.wl_surface());
         self.minimized_windows.retain(|(w, _)| {
             w.toplevel()
                 .map(|t| t.wl_surface() != surface.wl_surface())
@@ -501,6 +513,44 @@ impl XdgShellHandler for AgentCompositor {
                 .map(|t| t.wl_surface() != surface.wl_surface())
                 .unwrap_or(true)
         });
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl XdgDecorationHandler for AgentCompositor {
+    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        toplevel.with_pending_state(|state| {
+            state.decoration_mode = Some(DecorationMode::ServerSide);
+        });
+        toplevel.send_configure();
+        let surface = toplevel.wl_surface().clone();
+        if self.ssd_windows.insert(surface.clone()) {
+            let win_and_loc: Option<(Window, Point<i32, Logical>)> = self.space.elements()
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false))
+                .map(|w| {
+                    let loc = self.space.element_location(w).unwrap_or_default();
+                    (w.clone(), loc)
+                });
+            if let Some((window, loc)) = win_and_loc {
+                self.space.map_element(window, (loc.x, loc.y + crate::render::SSD_TITLE_BAR_HEIGHT), true);
+            }
+        }
+    }
+
+    fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: DecorationMode) {
+        toplevel.with_pending_state(|state| {
+            state.decoration_mode = Some(DecorationMode::ServerSide);
+        });
+        toplevel.send_configure();
+        self.ssd_windows.insert(toplevel.wl_surface().clone());
+    }
+
+    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
+        toplevel.with_pending_state(|state| {
+            state.decoration_mode = Some(DecorationMode::ServerSide);
+        });
+        toplevel.send_configure();
+        self.ssd_windows.insert(toplevel.wl_surface().clone());
     }
 }
 
@@ -565,6 +615,8 @@ smithay::delegate_seat!(AgentCompositor);
 smithay::delegate_output!(AgentCompositor);
 #[cfg(target_os = "linux")]
 smithay::delegate_data_device!(AgentCompositor);
+#[cfg(target_os = "linux")]
+smithay::delegate_xdg_decoration!(AgentCompositor);
 
 #[cfg(target_os = "linux")]
 pub fn run() -> Result<()> {
@@ -751,6 +803,7 @@ pub fn run() -> Result<()> {
 
     let compositor_state = CompositorState::new::<AgentCompositor>(&dh);
     let xdg_shell_state = XdgShellState::new::<AgentCompositor>(&dh);
+    let xdg_decoration_state = XdgDecorationState::new::<AgentCompositor>(&dh);
     let shm_state = ShmState::new::<AgentCompositor>(&dh, vec![]);
     let mut seat_state = SeatState::<AgentCompositor>::new();
     let data_device_state = DataDeviceState::new::<AgentCompositor>(&dh);
@@ -812,6 +865,7 @@ pub fn run() -> Result<()> {
         start_time: Instant::now(),
         compositor_state,
         xdg_shell_state,
+        xdg_decoration_state,
         shm_state,
         seat_state,
         data_device_state,
@@ -837,6 +891,7 @@ pub fn run() -> Result<()> {
         minimized_windows: Vec::new(),
         window_order: Vec::new(),
         scale_factor,
+        ssd_windows: HashSet::new(),
         wayland_display: socket_name.clone(),
         mcp_tx,
         editor_pid: None,
@@ -854,7 +909,7 @@ pub fn run() -> Result<()> {
             ("XDG_RUNTIME_DIR", xdg_runtime_dir.as_str()),
             ("TERM", "xterm-256color"),
         ];
-        for cmd in &["foot"] {
+        for cmd in &["alacritty"] {
             tracing::info!(cmd, "attempting to launch terminal");
             let result = std::process::Command::new(cmd)
                 .envs(env_vars.iter().cloned())

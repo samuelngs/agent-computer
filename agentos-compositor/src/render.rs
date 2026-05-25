@@ -56,6 +56,10 @@ pub(crate) type GbmDrmCompositor = DrmCompositor<
 >;
 
 #[cfg(target_os = "linux")]
+pub(crate) const SSD_TITLE_BAR_HEIGHT: i32 = 30;
+#[cfg(target_os = "linux")]
+const SSD_RESIZE_EDGE: f64 = 6.0;
+#[cfg(target_os = "linux")]
 const BASE_TASKBAR_HEIGHT: i32 = 36;
 #[cfg(target_os = "linux")]
 const BASE_TASKBAR_BTN_WIDTH: i32 = 140;
@@ -254,6 +258,30 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
         Kind::Unspecified,
     ) {
         elements.push(OutputRenderElements::Cursor(bg));
+    }
+
+    let s_f64 = s as f64;
+    for window in state.space.elements() {
+        if !state.is_ssd(window) {
+            continue;
+        }
+        let loc = match state.space.element_location(window) {
+            Some(l) => l,
+            None => continue,
+        };
+        let win_w = window.geometry().size.w;
+        let title = super::taskbar::get_window_title(window);
+        let label = if title.is_empty() { "Window".to_string() } else { title };
+        let bar_w = win_w * s;
+        let bar_h = SSD_TITLE_BAR_HEIGHT * s;
+        let bar_buf = create_label_buffer(bar_w, bar_h, 50, 50, 60, &label, 12.0 * s as f32, 8 * s, s);
+        let bar_x = loc.x as f64 * s_f64;
+        let bar_y = (loc.y - SSD_TITLE_BAR_HEIGHT) as f64 * s_f64;
+        if let Ok(bar_elem) = MemoryRenderBufferRenderElement::from_buffer(
+            &mut state.renderer, (bar_x, bar_y), &bar_buf, None, None, None, Kind::Unspecified,
+        ) {
+            elements.push(OutputRenderElements::Cursor(bar_elem));
+        }
     }
 
     elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
