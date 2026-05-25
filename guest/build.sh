@@ -68,6 +68,7 @@ apk add --root /rootfs --initdb --no-cache \
     foot \
     bash \
     curl \
+    iputils \
     sudo \
     shadow \
     util-linux \
@@ -117,12 +118,8 @@ mkdir -p /rootfs/etc/sudoers.d
 echo "agentos ALL=(ALL) NOPASSWD: ALL" > /rootfs/etc/sudoers.d/agentos
 chmod 440 /rootfs/etc/sudoers.d/agentos
 
-# Fix ping: busybox-suid has suid bit for raw socket access
-# /bin/ping is a symlink to /bin/busybox (non-suid); repoint to suid copy
-if [ -e /rootfs/bin/busybox-suid ]; then
-    chmod u+s /rootfs/bin/busybox-suid 2>/dev/null || true
-    ln -sf busybox-suid /rootfs/bin/ping
-fi
+# iputils provides /bin/ping with cap_net_raw; ping_group_range sysctl
+# set in fast-init allows unprivileged ICMP as fallback
 
 # Fast boot — bypass OpenRC, launch compositor directly
 # Use a boot script instead of many inittab lines (inittab can't do sequencing well)
@@ -143,7 +140,10 @@ mount -t tmpfs tmpfs /dev/shm -o mode=1777
 kmsg "fast-init: mounts done"
 
 # mke2fs -d strips suid bits, so restore at boot
-[ -e /bin/busybox-suid ] && chmod u+s /bin/busybox-suid 2>/dev/null
+[ -e /bin/bbsuid ] && chmod u+s /bin/bbsuid 2>/dev/null
+
+# Allow unprivileged ICMP (ping without suid/capabilities)
+echo "0 65534" > /proc/sys/net/ipv4/ping_group_range 2>/dev/null
 
 # Start eudev early so it sees module load events and populates udev db
 udevd --daemon 2>/dev/null
@@ -216,35 +216,30 @@ mkdir -p /run/dbus
 dbus-daemon --system 2>/dev/null
 kmsg "fast-init: dbus started"
 
-# Networking: libkrun uses TSI (Transparent Socket Impersonation)
-# TSI hijacks inet socket syscalls and routes through vsock to host.
-# A dummy0 interface with an IP is required so the kernel's routing
-# table has a valid source address for outbound connections.
+# Networking: virtio-net via libslirp (userspace NAT on host)
+# libkrun provides a virtio-net device backed by a socketpair.
+# Guest gets a real eth0 interface with DHCP from slirp (10.0.2.0/24).
 ip link set lo up 2>/dev/null
+modprobe virtio_net 2>/dev/null
 
-# dummy0 may already exist (CONFIG_DUMMY=y, numdummies defaults to 1)
-if [ ! -e /sys/class/net/dummy0 ]; then
-    modprobe dummy 2>/dev/null
-    ip link add dummy0 type dummy 2>/dev/null
-fi
+# Wait for eth0 to appear
+for i in $(seq 1 20); do
+    [ -e /sys/class/net/eth0 ] && break
+    sleep 0.25
+done
 
-if [ -e /sys/class/net/dummy0 ]; then
-    ip addr add 10.0.0.1/8 dev dummy0 2>/dev/null
-    ip link set dummy0 up 2>/dev/null
-    kmsg "fast-init: dummy0 up (10.0.0.1/8) for TSI"
+if [ -e /sys/class/net/eth0 ]; then
+    ip link set eth0 up 2>/dev/null
+    dhcpcd -w --timeout 10 eth0 2>/dev/null &
+    kmsg "fast-init: eth0 up, dhcpcd started"
 else
-    kmsg "fast-init: WARNING dummy0 not available"
+    kmsg "fast-init: WARNING no eth0 found"
 fi
 
-# Network diagnostics via kmsg (serial /dev/ttyAMA0 not available)
+# Network diagnostics
 kmsg "netdiag: ifaces=$(ip -o addr 2>&1 | tr '\n' '|')"
 kmsg "netdiag: routes=$(ip route 2>&1 | tr '\n' '|')"
-kmsg "netdiag: tsi_proto=$(grep -ci tsi /proc/net/protocols 2>/dev/null || echo 0)"
 kmsg "netdiag: vsock=$(ls /dev/vsock 2>&1)"
-kmsg "netdiag: cmdline=$(cat /proc/cmdline 2>/dev/null)"
-# Test DNS + TCP connectivity
-CURL_OUT=$(curl -s --connect-timeout 5 http://example.com 2>&1 | head -c 100) || CURL_OUT="FAIL:$?"
-kmsg "netdiag: curl=$CURL_OUT"
 
 kmsg "fast-init: complete"
 FASTINIT

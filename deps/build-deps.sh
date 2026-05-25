@@ -179,7 +179,7 @@ build_libkrunfw() {
 
 # ─── Step 5: libkrun ─────────────────────────────────────────────
 build_libkrun() {
-    echo "==> [5/5] Building libkrun (patched for upstream virglrenderer)"
+    echo "==> [5/7] Building libkrun (patched for upstream virglrenderer)"
 
     if [ -f "$PREFIX/lib/libkrun.dylib" ]; then
         echo "    libkrun already built, skipping"
@@ -192,8 +192,8 @@ build_libkrun() {
     fi
     cd libkrun
 
-    # Build with GPU + input support, linking against our custom virglrenderer
-    make GPU=1 BLK=1 INPUT=1 \
+    # Build with GPU + input + net support, linking against our custom virglrenderer
+    make GPU=1 BLK=1 INPUT=1 NET=1 \
         LIBRARY_PATH="$PREFIX/lib" \
         C_INCLUDE_PATH="$PREFIX/include" \
         -j"$JOBS"
@@ -216,6 +216,61 @@ build_libkrun() {
     echo "    libkrun built"
 }
 
+# ─── Step 6: glib2 ──────────────────────────────────────────────
+build_glib() {
+    echo "==> [6/7] Building glib2 (required by libslirp)"
+
+    if [ -f "$PREFIX/lib/libglib-2.0.dylib" ]; then
+        echo "    glib2 already built, skipping"
+        return
+    fi
+
+    cd "$SRC_DIR"
+    if [ ! -d glib ]; then
+        git clone --depth 1 --branch 2.84.1 https://github.com/GNOME/glib.git
+    fi
+    cd glib
+
+    meson setup build \
+        --prefix="$PREFIX" \
+        --buildtype=release \
+        -Dtests=false \
+        -Ddtrace=disabled \
+        -Dintrospection=disabled \
+        -Dnls=disabled \
+        -Dman-pages=disabled
+
+    ninja -C build -j"$JOBS"
+    ninja -C build install
+
+    echo "    glib2 built"
+}
+
+# ─── Step 7: libslirp ───────────────────────────────────────────
+build_libslirp() {
+    echo "==> [7/7] Building libslirp (userspace TCP/IP stack)"
+
+    if [ -f "$PREFIX/lib/libslirp.dylib" ]; then
+        echo "    libslirp already built, skipping"
+        return
+    fi
+
+    cd "$SRC_DIR"
+    if [ ! -d libslirp ]; then
+        git clone --depth 1 https://gitlab.freedesktop.org/slirp/libslirp.git
+    fi
+    cd libslirp
+
+    meson setup build \
+        --prefix="$PREFIX" \
+        --buildtype=release
+
+    ninja -C build -j"$JOBS"
+    ninja -C build install
+
+    echo "    libslirp built"
+}
+
 # ─── Run ─────────────────────────────────────────────────────────
 
 build_angle
@@ -223,6 +278,8 @@ build_libepoxy
 build_virglrenderer
 build_libkrunfw
 build_libkrun
+build_glib
+build_libslirp
 
 echo ""
 echo "==> All dependencies built successfully"

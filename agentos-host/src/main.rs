@@ -3,6 +3,7 @@ mod display;
 pub mod input;
 mod krun_ffi;
 pub mod mcp;
+pub mod slirp;
 mod vm;
 
 use clap::Parser;

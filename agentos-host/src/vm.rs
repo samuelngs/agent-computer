@@ -32,7 +32,7 @@ pub mod krun {
         }
     }
 
-    pub fn configure_vm(config: &VmConfig, mcp_socket_path: &str) -> Result<u32> {
+    pub fn configure_vm(config: &VmConfig, mcp_socket_path: &str) -> Result<(u32, i32)> {
         unsafe {
             // Pre-load ANGLE's libEGL on the main thread.
             // ANGLE's static initializers access Cocoa/Metal and deadlock
@@ -161,9 +161,28 @@ pub mod krun {
 
             let socket_path = CString::new(mcp_socket_path)?;
             check(
-                krun_add_vsock_port2(ctx, agentos_protocol::VSOCK_PORT, socket_path.as_ptr(), false),
+                krun_add_vsock_port2(ctx, agentos_protocol::VSOCK_PORT, socket_path.as_ptr(), true),
                 "krun_add_vsock_port2",
             )?;
+
+            let (krun_net_fd, slirp_fd) = crate::slirp::create_socketpair()
+                .context("create net socketpair")?;
+
+            let mut mac: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+            // No checksum/TSO offload — slirp expects valid checksums in all frames
+            let features: u32 = 0;
+            check(
+                krun_add_net_unixgram(
+                    ctx,
+                    std::ptr::null(),
+                    krun_net_fd,
+                    mac.as_mut_ptr(),
+                    features,
+                    0,
+                ),
+                "krun_add_net_unixgram",
+            )?;
+            tracing::info!("virtio-net configured via slirp (disables TSI)");
 
             if let Some(disk) = &config.disk {
                 let block_id = CString::new("root")?;
@@ -195,7 +214,7 @@ pub mod krun {
                 "VM configured via libkrun"
             );
 
-            Ok(ctx)
+            Ok((ctx, slirp_fd))
         }
     }
 

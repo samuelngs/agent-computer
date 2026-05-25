@@ -32,6 +32,15 @@ pub const KRUN_DISPLAY_FORMAT_B8G8R8X8_UNORM: u32 = 2;
 
 pub const KRUN_FEATURE_GPU: u64 = 2;
 pub const KRUN_FEATURE_INPUT: u64 = 4;
+pub const KRUN_FEATURE_NET: u64 = 0;
+
+pub const NET_FLAG_VFKIT: u32 = 1 << 0;
+pub const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+
+pub const NET_FEATURE_CSUM: u32 = 1 << 0;
+pub const NET_FEATURE_GUEST_CSUM: u32 = 1 << 1;
+pub const NET_FEATURE_GUEST_TSO4: u32 = 1 << 7;
+pub const NET_FEATURE_HOST_TSO4: u32 = 1 << 11;
 
 pub type krun_display_create_fn =
     Option<unsafe extern "C" fn(instance: *mut *mut c_void, userdata: *const c_void, reserved: *const c_void) -> i32>;
@@ -140,6 +149,15 @@ unsafe extern "C" {
         ctx_id: u32,
         input_fd: libc::c_int,
         output_fd: libc::c_int,
+    ) -> i32;
+
+    pub fn krun_add_net_unixgram(
+        ctx_id: u32,
+        c_path: *const libc::c_char,
+        fd: libc::c_int,
+        c_mac: *mut u8,
+        features: u32,
+        flags: u32,
     ) -> i32;
 
     pub fn krun_has_feature(feature: u64) -> i32;

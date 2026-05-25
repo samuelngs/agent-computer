@@ -31,7 +31,7 @@ XCURSOR_SIZE=$((24 * AGENTOS_SCALE))
 
 if [ -x /usr/local/bin/agentos-compositor ]; then
     echo "start-compositor: launching agentos-compositor (scale=$AGENTOS_SCALE)" > /dev/kmsg 2>/dev/null
-    exec su -l agentos -c "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR WLR_BACKENDS=drm WLR_RENDERER=gles2 LIBSEAT_BACKEND=noop XCURSOR_THEME=Adwaita XCURSOR_SIZE=$XCURSOR_SIZE AGENTOS_SCALE=$AGENTOS_SCALE /usr/local/bin/agentos-compositor 2>&1"
+    exec su -l agentos -c "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR WLR_BACKENDS=drm WLR_RENDERER=gles2 LIBSEAT_BACKEND=noop XCURSOR_THEME=Adwaita XCURSOR_SIZE=$XCURSOR_SIZE AGENTOS_SCALE=$AGENTOS_SCALE /usr/local/bin/agentos-compositor 2>&1"
 else
     echo "start-compositor: agentos-compositor not found" > /dev/kmsg 2>/dev/null
     exit 1
