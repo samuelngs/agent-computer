@@ -8,7 +8,7 @@ agentos-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
-fuser = "0.15"
+fuser = "0.16"
 libc = "0.2"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
