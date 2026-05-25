@@ -118,6 +118,73 @@ pub(crate) fn handle_mcp_tool(
             Some(serde_json::json!({ "written": written }))
         }
 
+        ToolCall::FsMount {
+            ref host_path,
+            ref guest_path,
+        } => {
+            let hp = host_path.clone();
+            let gp = guest_path.clone();
+            let fs_port = agentos_protocol::fs::VSOCK_FS_PORT;
+            std::thread::spawn(move || {
+                let result = std::process::Command::new("/usr/local/bin/agentos-fuse")
+                    .args([
+                        "--host-path",
+                        &hp,
+                        "--mount-point",
+                        &gp,
+                        "--port",
+                        &fs_port.to_string(),
+                    ])
+                    .spawn();
+                match result {
+                    Ok(mut child) => {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        match child.try_wait() {
+                            Ok(Some(status)) if !status.success() => {
+                                let _ = reply_tx.send(serde_json::json!({
+                                    "error": format!("fuse mount failed: exit {status}")
+                                }));
+                            }
+                            _ => {
+                                let _ = reply_tx.send(serde_json::json!({
+                                    "mounted": true,
+                                    "host_path": hp,
+                                    "guest_path": gp,
+                                }));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = reply_tx.send(serde_json::json!({
+                            "error": format!("failed to launch agentos-fuse: {e}")
+                        }));
+                    }
+                }
+            });
+            return None;
+        }
+
+        ToolCall::FsUnmount { ref guest_path } => {
+            let gp = guest_path.clone();
+            match std::process::Command::new("fusermount3")
+                .args(["-u", &gp])
+                .output()
+            {
+                Ok(out) if out.status.success() => {
+                    Some(serde_json::json!({ "unmounted": true, "guest_path": gp }))
+                }
+                Ok(out) => Some(serde_json::json!({
+                    "error": format!(
+                        "fusermount3 failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    )
+                })),
+                Err(e) => Some(serde_json::json!({
+                    "error": format!("fusermount3 exec failed: {e}")
+                })),
+            }
+        }
+
         other => Some(handle_sync_tool(state, other)),
     }
 }

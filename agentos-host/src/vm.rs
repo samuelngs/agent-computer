@@ -13,6 +13,7 @@ pub struct VmConfig {
     pub display_scale: u32,
     pub shared_dir: Option<PathBuf>,
     pub mcp_test: bool,
+    pub allow_mount: Vec<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -32,7 +33,7 @@ pub mod krun {
         }
     }
 
-    pub fn configure_vm(config: &VmConfig, mcp_socket_path: &str) -> Result<(u32, i32)> {
+    pub fn configure_vm(config: &VmConfig, mcp_socket_path: &str, fs_socket_path: &str) -> Result<(u32, i32)> {
         unsafe {
             // Pre-load ANGLE's libEGL on the main thread.
             // ANGLE's static initializers access Cocoa/Metal and deadlock
@@ -162,7 +163,13 @@ pub mod krun {
             let socket_path = CString::new(mcp_socket_path)?;
             check(
                 krun_add_vsock_port2(ctx, agentos_protocol::VSOCK_PORT, socket_path.as_ptr(), true),
-                "krun_add_vsock_port2",
+                "krun_add_vsock_port2 (mcp)",
+            )?;
+
+            let fs_path = CString::new(fs_socket_path)?;
+            check(
+                krun_add_vsock_port2(ctx, agentos_protocol::fs::VSOCK_FS_PORT, fs_path.as_ptr(), true),
+                "krun_add_vsock_port2 (fs)",
             )?;
 
             let (krun_net_fd, slirp_fd) = crate::slirp::create_socketpair()

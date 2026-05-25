@@ -89,8 +89,9 @@ impl AppDelegate {
         let mtm = MainThreadMarker::new().expect("not on main thread");
 
         let mcp_socket_path = format!("/tmp/agentos-mcp-{}.sock", std::process::id());
+        let fs_socket_path = format!("/tmp/agentos-fs-{}.sock", std::process::id());
 
-        let (ctx, slirp_fd) = match vm::krun::configure_vm(config, &mcp_socket_path) {
+        let (ctx, slirp_fd) = match vm::krun::configure_vm(config, &mcp_socket_path, &fs_socket_path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("failed to configure VM: {e}");
@@ -106,6 +107,9 @@ impl AppDelegate {
         self.create_viewer_window(mtm, config);
         vm::krun::start_vm(ctx);
         self.start_display_timer();
+
+        let fs_server = crate::fs_server::FsServer::new(&fs_socket_path, config.allow_mount.clone());
+        fs_server.start();
 
         if config.mcp_test {
             crate::mcp::run_mcp_test(&mcp_socket_path);

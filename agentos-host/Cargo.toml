@@ -39,3 +39,4 @@ objc2-quartz-core = { version = "0.3", features = [
 serde_json.workspace = true
 serde.workspace = true
 libc = "0.2"
+base64 = "0.22"

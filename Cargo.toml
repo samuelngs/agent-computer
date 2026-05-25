@@ -1,5 +1,5 @@
 [workspace]
-members = ["agentos-host", "agentos-compositor", "agentos-protocol"]
+members = ["agentos-host", "agentos-compositor", "agentos-fuse", "agentos-protocol"]
 default-members = ["agentos-host", "agentos-protocol"]
 resolver = "2"
 

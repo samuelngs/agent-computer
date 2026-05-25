@@ -1,3 +1,5 @@
+pub mod fs;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +104,13 @@ pub enum ToolCall {
         #[serde(skip_serializing_if = "Option::is_none")]
         offset: Option<u32>,
     },
+    #[serde(rename = "fs_mount")]
+    FsMount {
+        host_path: String,
+        guest_path: String,
+    },
+    #[serde(rename = "fs_unmount")]
+    FsUnmount { guest_path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

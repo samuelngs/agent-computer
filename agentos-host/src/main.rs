@@ -1,5 +1,6 @@
 mod app;
 mod display;
+pub mod fs_server;
 pub mod input;
 mod krun_ffi;
 pub mod mcp;
@@ -55,12 +56,23 @@ pub struct Cli {
     /// Run MCP connectivity test after VM starts
     #[arg(long)]
     mcp_test: bool,
+
+    /// Allowlist of host paths that can be mounted into guest (comma-separated, default: *)
+    #[arg(long, default_value = "*")]
+    allow_mount: String,
 }
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
+
+    let allow_mount: Vec<String> = cli
+        .allow_mount
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     let config = vm::VmConfig {
         kernel: cli.kernel,
@@ -74,6 +86,7 @@ fn main() -> anyhow::Result<()> {
         display_scale: cli.scale.max(1),
         shared_dir: cli.share,
         mcp_test: cli.mcp_test,
+        allow_mount,
     };
 
     #[cfg(target_os = "macos")]

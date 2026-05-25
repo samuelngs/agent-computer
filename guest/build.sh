@@ -75,7 +75,9 @@ apk add --root /rootfs --initdb --no-cache \
     shadow \
     util-linux \
     iproute2 \
-    vulkan-tools
+    vulkan-tools \
+    fuse3 \
+    fuse3-dev
 
 # Install all Mesa + Vulkan + wayland from Alpine Edge
 # --upgrade forces replacement of 3.21 packages with Edge versions
@@ -103,6 +105,13 @@ if [ -f /output/agentos-compositor ]; then
     cp /output/agentos-compositor /rootfs/usr/local/bin/
     chmod +x /rootfs/usr/local/bin/agentos-compositor
     echo "    compositor binary installed"
+fi
+
+# Copy FUSE mount binary if present
+if [ -f /output/agentos-fuse ]; then
+    cp /output/agentos-fuse /rootfs/usr/local/bin/
+    chmod +x /rootfs/usr/local/bin/agentos-fuse
+    echo "    fuse binary installed"
 fi
 
 echo "--- Configuring rootfs ---"
@@ -161,6 +170,7 @@ modprobe evdev
 modprobe vsock
 modprobe virtio_transport
 modprobe vmw_vsock_virtio_transport
+modprobe fuse
 kmsg "fast-init: modprobe done"
 
 # Wait for DRM device to appear
@@ -292,6 +302,7 @@ virtiofs
 vsock
 virtio_transport
 vmw_vsock_virtio_transport
+fuse
 dummy
 EOF
 

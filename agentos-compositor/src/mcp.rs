@@ -212,6 +212,7 @@ fn dispatch_tool(
 ) -> JsonRpcResponse {
     let timeout = match &tool {
         ToolCall::ShellExec { .. } => std::time::Duration::from_secs(300),
+        ToolCall::FsMount { .. } => std::time::Duration::from_secs(30),
         _ => std::time::Duration::from_secs(5),
     };
     let (reply_tx, reply_rx) = mpsc::sync_channel(1);
