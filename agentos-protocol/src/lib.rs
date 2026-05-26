@@ -108,6 +108,7 @@ pub enum ToolCall {
     #[serde(rename = "fs_mount")]
     FsMount {
         host_path: String,
+        #[serde(default = "default_guest_workspace")]
         guest_path: String,
     },
     #[serde(rename = "fs_unmount")]
@@ -148,6 +149,10 @@ pub struct ScreenshotResult {
     pub height: u32,
     pub format: String,
     pub data: Vec<u8>,
+}
+
+fn default_guest_workspace() -> String {
+    "/home/agentos/workspace".into()
 }
 
 pub const VSOCK_PORT: u32 = 9339;
@@ -324,14 +329,14 @@ pub fn mcp_tool_schemas() -> Vec<serde_json::Value> {
         },
         {
             "name": "fs_mount",
-            "description": "Mount a host directory into the guest via FUSE-over-vsock.",
+            "description": "Mount a host directory into the guest via FUSE-over-vsock. Default guest_path is /home/agentos/workspace.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "host_path": { "type": "string" },
-                    "guest_path": { "type": "string" }
+                    "host_path": { "type": "string", "description": "Host directory path to mount" },
+                    "guest_path": { "type": "string", "description": "Guest mount point (default: /home/agentos/workspace)", "default": "/home/agentos/workspace" }
                 },
-                "required": ["host_path", "guest_path"]
+                "required": ["host_path"]
             }
         },
         {

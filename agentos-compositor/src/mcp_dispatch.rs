@@ -126,6 +126,7 @@ pub(crate) fn handle_mcp_tool(
             let gp = guest_path.clone();
             let fs_port = agentos_protocol::fs::VSOCK_FS_PORT;
             std::thread::spawn(move || {
+                let _ = std::fs::create_dir_all(&gp);
                 let result = std::process::Command::new("/usr/local/bin/agentos-fuse")
                     .args([
                         "--host-path",
@@ -393,6 +394,18 @@ fn handle_sync_tool(
                 agentos_protocol::MouseButton::Right => 0x111,
                 agentos_protocol::MouseButton::Middle => 0x112,
             };
+
+            // Set keyboard focus to window under pointer (matches normal input path)
+            let location = pointer.current_location();
+            if let Some((window, _)) = state.space.element_under(location) {
+                let window = window.clone();
+                state.space.raise_element(&window, true);
+                if let Some(keyboard) = state.seat.get_keyboard() {
+                    let surface = window.toplevel().map(|t| t.wl_surface().clone());
+                    keyboard.set_focus(state, surface, serial);
+                }
+            }
+
             pointer.button(
                 state,
                 &ButtonEvent {
@@ -584,9 +597,34 @@ fn open_in_editor(state: &mut AgentCompositor, path: &str, line: Option<u32>) {
 #[cfg(target_os = "linux")]
 fn char_to_evdev_keycode(ch: char) -> Option<(u32, bool)> {
     const OFF: u32 = 8;
+    fn alpha(evdev: u32) -> u32 { evdev + 8 }
     match ch {
-        'a'..='z' => Some((ch as u32 - 'a' as u32 + 30 + OFF, false)),
-        'A'..='Z' => Some((ch as u32 - 'A' as u32 + 30 + OFF, true)),
+        'a' => Some((alpha(30), false)), 'b' => Some((alpha(48), false)),
+        'c' => Some((alpha(46), false)), 'd' => Some((alpha(32), false)),
+        'e' => Some((alpha(18), false)), 'f' => Some((alpha(33), false)),
+        'g' => Some((alpha(34), false)), 'h' => Some((alpha(35), false)),
+        'i' => Some((alpha(23), false)), 'j' => Some((alpha(36), false)),
+        'k' => Some((alpha(37), false)), 'l' => Some((alpha(38), false)),
+        'm' => Some((alpha(50), false)), 'n' => Some((alpha(49), false)),
+        'o' => Some((alpha(24), false)), 'p' => Some((alpha(25), false)),
+        'q' => Some((alpha(16), false)), 'r' => Some((alpha(19), false)),
+        's' => Some((alpha(31), false)), 't' => Some((alpha(20), false)),
+        'u' => Some((alpha(22), false)), 'v' => Some((alpha(47), false)),
+        'w' => Some((alpha(17), false)), 'x' => Some((alpha(45), false)),
+        'y' => Some((alpha(21), false)), 'z' => Some((alpha(44), false)),
+        'A' => Some((alpha(30), true)), 'B' => Some((alpha(48), true)),
+        'C' => Some((alpha(46), true)), 'D' => Some((alpha(32), true)),
+        'E' => Some((alpha(18), true)), 'F' => Some((alpha(33), true)),
+        'G' => Some((alpha(34), true)), 'H' => Some((alpha(35), true)),
+        'I' => Some((alpha(23), true)), 'J' => Some((alpha(36), true)),
+        'K' => Some((alpha(37), true)), 'L' => Some((alpha(38), true)),
+        'M' => Some((alpha(50), true)), 'N' => Some((alpha(49), true)),
+        'O' => Some((alpha(24), true)), 'P' => Some((alpha(25), true)),
+        'Q' => Some((alpha(16), true)), 'R' => Some((alpha(19), true)),
+        'S' => Some((alpha(31), true)), 'T' => Some((alpha(20), true)),
+        'U' => Some((alpha(22), true)), 'V' => Some((alpha(47), true)),
+        'W' => Some((alpha(17), true)), 'X' => Some((alpha(45), true)),
+        'Y' => Some((alpha(21), true)), 'Z' => Some((alpha(44), true)),
         '1' => Some((2 + OFF, false)),
         '2' => Some((3 + OFF, false)),
         '3' => Some((4 + OFF, false)),
