@@ -28,6 +28,7 @@ unsafe extern "C" {
     fn IOSurfaceLock(surface: IOSurfaceRef, options: u32, seed: *mut u32) -> i32;
     fn IOSurfaceUnlock(surface: IOSurfaceRef, options: u32, seed: *mut u32) -> i32;
     fn IOSurfaceGetAllocSize(surface: IOSurfaceRef) -> usize;
+    fn IOSurfaceGetBytesPerRow(surface: IOSurfaceRef) -> usize;
     fn CFRelease(obj: *const c_void);
 
     static kIOSurfaceWidth: CFStringRef;
@@ -129,6 +130,15 @@ fn create_iosurface(width: u32, height: u32) -> IOSurfaceRef {
 
 #[cfg(target_os = "macos")]
 const NUM_SURFACES: usize = 4;
+#[cfg(target_os = "macos")]
+const IOSURFACE_LOCK_READ_ONLY: u32 = 0x0000_0001;
+
+#[cfg(target_os = "macos")]
+pub struct FramebufferCapture {
+    pub width: u32,
+    pub height: u32,
+    pub pixels_rgba: Vec<u8>,
+}
 
 #[cfg(target_os = "macos")]
 pub struct DisplayState {
@@ -199,6 +209,60 @@ impl DisplayState {
         }
 
         Some(surface)
+    }
+
+    pub fn capture_framebuffer(&self) -> Option<FramebufferCapture> {
+        let w = self.width.load(Ordering::Relaxed);
+        let h = self.height.load(Ordering::Relaxed);
+        if w == 0 || h == 0 {
+            return None;
+        }
+
+        let guard = self.inner.lock().ok()?;
+        let idx = guard.display_idx.or(guard.ready_idx)?;
+        let surface = guard.surfaces[idx];
+        if surface.is_null() {
+            return None;
+        }
+
+        let stride = unsafe { IOSurfaceGetBytesPerRow(surface) };
+        let min_stride = w as usize * 4;
+        if stride < min_stride {
+            return None;
+        }
+
+        let lock_result =
+            unsafe { IOSurfaceLock(surface, IOSURFACE_LOCK_READ_ONLY, ptr::null_mut()) };
+        if lock_result != 0 {
+            return None;
+        }
+
+        let capture = unsafe {
+            let base = IOSurfaceGetBaseAddress(surface) as *const u8;
+            if base.is_null() {
+                None
+            } else {
+                let mut pixels = Vec::with_capacity(min_stride * h as usize);
+                for row in 0..h as usize {
+                    let row_base = base.add(row * stride);
+                    let row_bytes = std::slice::from_raw_parts(row_base, min_stride);
+                    for px in row_bytes.chunks_exact(4) {
+                        pixels.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+                    }
+                }
+                Some(FramebufferCapture {
+                    width: w,
+                    height: h,
+                    pixels_rgba: pixels,
+                })
+            }
+        };
+
+        unsafe {
+            IOSurfaceUnlock(surface, IOSURFACE_LOCK_READ_ONLY, ptr::null_mut());
+        }
+
+        capture
     }
 }
 

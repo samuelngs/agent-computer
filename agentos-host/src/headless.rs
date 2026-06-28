@@ -75,6 +75,19 @@ impl HeadlessDisplayState {
         let pixels = guard.buffers[ready].clone();
         Some((pixels, w, h))
     }
+
+    pub fn capture_latest_framebuffer(&self) -> Option<(Vec<u8>, u32, u32)> {
+        let w = self.width.load(Ordering::Relaxed);
+        let h = self.height.load(Ordering::Relaxed);
+        if w == 0 || h == 0 {
+            return None;
+        }
+
+        let guard = self.inner.lock().ok()?;
+        let idx = guard.ready_idx.or(guard.read_idx)?;
+        let pixels = guard.buffers[idx].clone();
+        Some((pixels, w, h))
+    }
 }
 
 static HEADLESS_DISPLAY: OnceLock<Arc<HeadlessDisplayState>> = OnceLock::new();

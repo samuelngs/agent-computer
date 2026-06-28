@@ -222,6 +222,13 @@ fn forward_one_message(
     socket_path: &str,
     message: serde_json::Value,
 ) -> anyhow::Result<Option<Vec<u8>>> {
+    if let Some(response) = crate::mcp_capture::try_handle_screen_capture(&message)? {
+        return match response {
+            crate::mcp_capture::InterceptedResponse::Response(body) => Ok(Some(body)),
+            crate::mcp_capture::InterceptedResponse::NoResponse => Ok(None),
+        };
+    }
+
     let expect_response = message.get("id").is_some();
     let body = serde_json::to_vec(&message)?;
     forward_to_guest(socket_path, &body, expect_response)

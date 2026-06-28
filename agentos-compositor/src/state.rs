@@ -91,8 +91,8 @@ use crate::input::CursorShape;
 
 #[cfg(target_os = "linux")]
 use crate::render::{
-    RedrawState, SoftwareDrmCompositor, create_solid_buffer, queue_redraw, render_frame,
-    send_frame_callbacks, taskbar_height,
+    RedrawState, ScreenSnapshot, SoftwareDrmCompositor, create_solid_buffer, queue_redraw,
+    render_frame, send_frame_callbacks, taskbar_height,
 };
 
 #[cfg(target_os = "linux")]
@@ -152,6 +152,8 @@ pub(crate) struct AgentCompositor {
     pub(crate) legacy_cursor: Option<crate::cursor::LegacyHardwareCursor>,
     pub(crate) redraw_state: RedrawState,
     pub(crate) last_render_at: Instant,
+    pub(crate) last_screen_snapshot: Option<ScreenSnapshot>,
+    pub(crate) screen_snapshot_requested: bool,
 
     pub(crate) taskbar_bg: MemoryRenderBuffer,
     pub(crate) taskbar_buttons: Vec<(String, bool, bool, MemoryRenderBuffer)>,
@@ -1059,6 +1061,8 @@ pub fn run() -> Result<()> {
         legacy_cursor,
         redraw_state: RedrawState::Idle,
         last_render_at: Instant::now() - Duration::from_millis(16),
+        last_screen_snapshot: None,
+        screen_snapshot_requested: false,
         taskbar_bg,
         taskbar_buttons: Vec::new(),
         taskbar_bg_id: Id::new(),

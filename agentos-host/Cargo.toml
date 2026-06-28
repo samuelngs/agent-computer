@@ -41,3 +41,4 @@ serde_json.workspace = true
 serde.workspace = true
 libc = "0.2"
 base64 = "0.22"
+png = "0.17"

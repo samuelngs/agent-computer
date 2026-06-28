@@ -41,10 +41,32 @@ pub fn run_stdio_proxy(socket_path: &str) -> anyhow::Result<()> {
             }
         };
 
-        // JSON-RPC notifications have no "id" — don't expect a response.
-        let is_notification = serde_json::from_str::<serde_json::Value>(&line)
+        let parsed_message = serde_json::from_str::<serde_json::Value>(&line).ok();
+        let is_notification = parsed_message
+            .as_ref()
             .map(|v| v.get("id").is_none())
             .unwrap_or(false);
+
+        if let Some(message) = parsed_message.as_ref() {
+            match crate::mcp_capture::try_handle_screen_capture(message) {
+                Ok(Some(crate::mcp_capture::InterceptedResponse::Response(response))) => {
+                    if let Err(e) = stdout
+                        .write_all(&response)
+                        .and_then(|_| stdout.write_all(b"\n"))
+                        .and_then(|_| stdout.flush())
+                    {
+                        tracing::error!("failed to write to stdout: {e}");
+                        break;
+                    }
+                    continue;
+                }
+                Ok(Some(crate::mcp_capture::InterceptedResponse::NoResponse)) => continue,
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(%e, "host screen capture failed; forwarding to guest");
+                }
+            }
+        }
 
         if let Err(e) = sock_writer
             .write_all(line.as_bytes())

@@ -5,13 +5,14 @@ use anyhow::Result;
 use smithay::{
     backend::renderer::element::AsRenderElements,
     backend::{
-        allocator::dumb::DumbAllocator,
+        allocator::{Buffer, dmabuf::AsDmabuf, dumb::DumbAllocator, dumb::DumbBuffer},
         drm::{
             DrmDeviceFd,
-            compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement},
+            compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement, PrimarySwapchainElement},
+            dumb::DumbFramebuffer,
         },
         renderer::{
-            ImportAll, ImportMem,
+            Bind, ExportMem, ImportAll, ImportMem, Renderer,
             element::{
                 Id, Kind,
                 memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
@@ -23,7 +24,6 @@ use smithay::{
         },
     },
     desktop::{Window, space::SpaceRenderElements},
-    output::Mode as OutputMode,
     utils::{Physical, Rectangle, Scale, Transform},
 };
 
@@ -68,6 +68,13 @@ const BASE_TASKBAR_BTN_HEIGHT: i32 = 28;
 const BASE_TASKBAR_BTN_GAP: i32 = 4;
 #[cfg(target_os = "linux")]
 const BASE_TASKBAR_BTN_MARGIN: i32 = 4;
+
+#[cfg(target_os = "linux")]
+pub(crate) struct ScreenSnapshot {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) pixels_rgba: Vec<u8>,
+}
 
 #[cfg(target_os = "linux")]
 pub(crate) fn taskbar_height(scale: i32) -> i32 {
@@ -386,6 +393,16 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
         FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT,
     ) {
         Ok(result) => {
+            if state.screen_snapshot_requested {
+                state.screen_snapshot_requested = false;
+                if let PrimaryPlaneElement::Swapchain(primary) = &result.primary_element {
+                    match snapshot_primary_plane(state, primary) {
+                        Ok(snapshot) => state.last_screen_snapshot = Some(snapshot),
+                        Err(e) => tracing::warn!(%e, "failed to snapshot rendered primary plane"),
+                    }
+                }
+            }
+
             if trace_frame {
                 tracing::info!(
                     frame,
@@ -455,6 +472,60 @@ pub(crate) fn render_frame(state: &mut AgentCompositor) {
             state.redraw_state = RedrawState::Idle;
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn snapshot_primary_plane(
+    state: &mut AgentCompositor,
+    primary: &PrimarySwapchainElement<DumbBuffer, DumbFramebuffer>,
+) -> Result<ScreenSnapshot> {
+    state
+        .renderer
+        .wait(&primary.sync)
+        .map_err(|e| anyhow::anyhow!("wait for primary sync: {e}"))?;
+
+    let mut dmabuf = primary
+        .buffer()
+        .export()
+        .map_err(|e| anyhow::anyhow!("export primary plane dmabuf: {e}"))?;
+    let size = dmabuf.size();
+    let width = size.w.max(1) as u32;
+    let height = size.h.max(1) as u32;
+    let row_len = width as usize * 4;
+
+    let framebuffer = state
+        .renderer
+        .bind(&mut dmabuf)
+        .map_err(|e| anyhow::anyhow!("bind primary plane dmabuf: {e}"))?;
+    let mapping = state
+        .renderer
+        .copy_framebuffer(
+            &framebuffer,
+            Rectangle::from_size(size),
+            DrmFourcc::Abgr8888,
+        )
+        .map_err(|e| anyhow::anyhow!("copy primary plane framebuffer: {e}"))?;
+    let mapped = state
+        .renderer
+        .map_texture(&mapping)
+        .map_err(|e| anyhow::anyhow!("map primary plane framebuffer copy: {e}"))?;
+
+    let stride = mapped.len() / height as usize;
+    if stride < row_len {
+        anyhow::bail!("mapped framebuffer stride too small: stride={stride}, row_len={row_len}");
+    }
+
+    let mut pixels_rgba = Vec::with_capacity(row_len * height as usize);
+    for row in 0..height as usize {
+        let start = row * stride;
+        pixels_rgba.extend_from_slice(&mapped[start..start + row_len]);
+    }
+
+    Ok(ScreenSnapshot {
+        width,
+        height,
+        pixels_rgba,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -537,132 +608,16 @@ pub(crate) fn send_frame_callbacks(state: &mut AgentCompositor) {
 pub(crate) fn capture_screen(state: &mut AgentCompositor) -> Result<(u32, u32, String)> {
     use base64::Engine;
 
-    let output_mode = state.output.current_mode().unwrap_or(OutputMode {
-        size: (1920, 1080).into(),
-        refresh: 60000,
-    });
-    let output_w = output_mode.size.w.max(1);
-    let output_h = output_mode.size.h.max(1);
-    let w = 480;
-    let h = ((output_h as f64 / output_w as f64) * w as f64)
-        .round()
-        .max(1.0) as i32;
-    let capture_scale = w as f64 / output_w as f64;
-    let s = state.scale_factor;
-    let mut pixels = vec![0u8; (w.max(1) * h.max(1) * 4) as usize];
-    fill_rect(&mut pixels, w, h, 0, 0, w, h, [26, 26, 77, 255]);
-
-    let windows: Vec<Window> = state.space.elements().rev().cloned().collect();
-    for window in &windows {
-        let Some(loc) = state.space.element_location(window) else {
-            continue;
-        };
-        let geometry = window.geometry();
-        let win_x = (loc.x as f64 * s as f64 * capture_scale).round() as i32;
-        let win_y = (loc.y as f64 * s as f64 * capture_scale).round() as i32;
-        let win_w = (geometry.size.w as f64 * s as f64 * capture_scale)
-            .round()
-            .max(1.0) as i32;
-        let win_h = (geometry.size.h as f64 * s as f64 * capture_scale)
-            .round()
-            .max(1.0) as i32;
-
-        if state.is_ssd(window) {
-            let bar_h = (SSD_TITLE_BAR_HEIGHT as f64 * s as f64 * capture_scale)
-                .round()
-                .max(1.0) as i32;
-            let bar_y = win_y - bar_h;
-            fill_rect(
-                &mut pixels,
-                w,
-                h,
-                win_x,
-                bar_y,
-                win_w,
-                bar_h,
-                [50, 50, 60, 255],
-            );
-            stroke_rect(
-                &mut pixels,
-                w,
-                h,
-                win_x,
-                bar_y,
-                win_w,
-                bar_h + win_h,
-                [115, 115, 125, 255],
-            );
-        } else {
-            stroke_rect(
-                &mut pixels,
-                w,
-                h,
-                win_x,
-                win_y,
-                win_w,
-                win_h,
-                [115, 115, 125, 255],
-            );
-        }
-        fill_rect(
-            &mut pixels,
-            w,
-            h,
-            win_x,
-            win_y,
-            win_w,
-            win_h,
-            [245, 245, 245, 255],
-        );
-    }
-
-    let tb_h = (taskbar_height(s) as f64 * capture_scale).round().max(1.0) as i32;
-    let taskbar_y = h - tb_h;
-    fill_rect(&mut pixels, w, h, 0, taskbar_y, w, tb_h, [26, 26, 26, 255]);
-
-    let btn_w = (taskbar_btn_width(s) as f64 * capture_scale)
-        .round()
-        .max(1.0) as i32;
-    let btn_gap = (taskbar_btn_gap(s) as f64 * capture_scale).round().max(1.0) as i32;
-    let btn_margin = (taskbar_btn_margin(s) as f64 * capture_scale)
-        .round()
-        .max(1.0) as i32;
-    let btn_h = (taskbar_btn_height(s) as f64 * capture_scale)
-        .round()
-        .max(1.0) as i32;
-    let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
-    let mut btn_idx = 0i32;
-    for window in &state.window_order {
-        let is_minimized = state.minimized_windows.iter().any(|(w, _)| w == window);
-        let is_visible = state.space.elements().any(|w| w == window);
-        if !is_minimized && !is_visible {
-            continue;
-        }
-        let is_focused = window
-            .toplevel()
-            .map(|t| focused_surface.as_ref() == Some(t.wl_surface()))
-            .unwrap_or(false);
-        let color = if is_minimized {
-            [35, 35, 35, 255]
-        } else if is_focused {
-            [80, 80, 120, 255]
-        } else {
-            [50, 50, 50, 255]
-        };
-        let x = btn_margin + btn_idx * (btn_w + btn_gap);
-        let y = taskbar_y + (tb_h - btn_h) / 2;
-        fill_rect(&mut pixels, w, h, x, y, btn_w, btn_h, color);
-        btn_idx += 1;
-    }
-
-    let pointer_loc = state.pointer.current_location();
-    let cursor_x = (pointer_loc.x * s as f64 * capture_scale).round() as i32;
-    let cursor_y = (pointer_loc.y * s as f64 * capture_scale).round() as i32;
-    draw_cursor(&mut pixels, w, h, cursor_x, cursor_y, 1);
+    state.screen_snapshot_requested = true;
+    render_frame(state);
+    let snapshot = state
+        .last_screen_snapshot
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no rendered screen frame available"))?;
 
     let mut png_buf = Vec::new();
     {
-        let mut encoder = png::Encoder::new(&mut png_buf, w as u32, h as u32);
+        let mut encoder = png::Encoder::new(&mut png_buf, snapshot.width, snapshot.height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(png::Compression::Fast);
@@ -670,97 +625,10 @@ pub(crate) fn capture_screen(state: &mut AgentCompositor) -> Result<(u32, u32, S
             .write_header()
             .map_err(|e| anyhow::anyhow!("png header: {e}"))?;
         writer
-            .write_image_data(&pixels)
+            .write_image_data(&snapshot.pixels_rgba)
             .map_err(|e| anyhow::anyhow!("png write: {e}"))?;
     }
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png_buf);
-    Ok((w as u32, h as u32, b64))
-}
-
-#[cfg(target_os = "linux")]
-fn fill_rect(
-    buf: &mut [u8],
-    width: i32,
-    height: i32,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    color: [u8; 4],
-) {
-    let x0 = x.max(0).min(width);
-    let y0 = y.max(0).min(height);
-    let x1 = (x + w).max(0).min(width);
-    let y1 = (y + h).max(0).min(height);
-    if x0 >= x1 || y0 >= y1 {
-        return;
-    }
-    for py in y0..y1 {
-        for px in x0..x1 {
-            put_pixel(buf, width, height, px, py, color);
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn stroke_rect(
-    buf: &mut [u8],
-    width: i32,
-    height: i32,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    color: [u8; 4],
-) {
-    if w <= 0 || h <= 0 {
-        return;
-    }
-    fill_rect(buf, width, height, x, y, w, 1, color);
-    fill_rect(buf, width, height, x, y + h - 1, w, 1, color);
-    fill_rect(buf, width, height, x, y, 1, h, color);
-    fill_rect(buf, width, height, x + w - 1, y, 1, h, color);
-}
-
-#[cfg(target_os = "linux")]
-fn draw_cursor(buf: &mut [u8], width: i32, height: i32, x: i32, y: i32, scale: i32) {
-    let s = scale.max(1);
-    for dy in 0..(16 * s) {
-        let row_width = if dy < 10 * s {
-            dy / s + 1
-        } else {
-            (16 * s - dy) / s
-        };
-        for dx in 0..(row_width * s).max(1) {
-            let border = dx < s || dy < s || dx >= (row_width * s - s).max(0);
-            put_pixel(
-                buf,
-                width,
-                height,
-                x + dx,
-                y + dy,
-                if border {
-                    [0, 0, 0, 255]
-                } else {
-                    [245, 245, 245, 255]
-                },
-            );
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn put_pixel(buf: &mut [u8], width: i32, height: i32, x: i32, y: i32, color: [u8; 4]) {
-    if x < 0 || y < 0 || x >= width || y >= height {
-        return;
-    }
-    let idx = ((y * width + x) * 4) as usize;
-    if idx + 3 >= buf.len() {
-        return;
-    }
-    buf[idx] = color[0];
-    buf[idx + 1] = color[1];
-    buf[idx + 2] = color[2];
-    buf[idx + 3] = color[3];
+    Ok((snapshot.width, snapshot.height, b64))
 }
