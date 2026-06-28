@@ -24,16 +24,18 @@ esac
 DEBIAN_IMAGE="${DEBIAN_IMAGE:-$DEBIAN_IMAGE_DEFAULT}"
 
 OUT_DIR="$SCRIPT_DIR/out/$ARCH"
+TARGET_VOLUME="${APC_DOCKER_TARGET_VOLUME:-apc-target-debian-$ARCH}"
 mkdir -p "$OUT_DIR"
 
-echo "==> Building agentos-fuse (arch=$ARCH, image=$DEBIAN_IMAGE)"
+echo "==> Building apc-fuse (arch=$ARCH, image=$DEBIAN_IMAGE)"
+echo "    target cache: $TARGET_VOLUME"
 
 docker run --rm \
     --platform "$DOCKER_PLATFORM" \
     -v "$WORKSPACE_DIR:/work" \
     -v "cargo-home-debian-$ARCH:/cargo-home" \
     -v "rustup-debian-$ARCH:/rustup" \
-    -v "agentos-target-debian-$ARCH:/target" \
+    -v "$TARGET_VOLUME:/target" \
     -w /work \
     -e CARGO_HOME=/cargo-home \
     -e RUSTUP_HOME=/rustup \
@@ -54,9 +56,9 @@ if [ ! -x /cargo-home/bin/cargo ]; then
 fi
 
 export PATH="$CARGO_HOME/bin:$PATH"
-cargo build --release -p agentos-fuse
-cp /target/release/agentos-fuse /work/guest/out/'"$ARCH"'/
+cargo build --release -p apc-fuse
+cp /target/release/apc-fuse /work/guest/out/'"$ARCH"'/
 '
 
-echo "==> FUSE binary built: $OUT_DIR/agentos-fuse"
-ls -lh "$OUT_DIR/agentos-fuse"
+echo "==> FUSE binary built: $OUT_DIR/apc-fuse"
+ls -lh "$OUT_DIR/apc-fuse"

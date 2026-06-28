@@ -1,0 +1,779 @@
+diff --git a/include/libkrun_display.h b/include/libkrun_display.h
+deleted file mode 120000
+index 7a41591..0000000
+--- a/include/libkrun_display.h
++++ /dev/null
+@@ -1 +0,0 @@
+-../src/display/libkrun_display.h
+\ No newline at end of file
+diff --git a/include/libkrun_display.h b/include/libkrun_display.h
+new file mode 100644
+index 0000000..294b3a6
+--- /dev/null
++++ b/include/libkrun_display.h
+@@ -0,0 +1,188 @@
++#ifndef _LIBKRUN_DISPLAY_H
++#define _LIBKRUN_DISPLAY_H
++
++#include <inttypes.h>
++#include <stddef.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// The display backend encountered an internal error
++#define KRUN_DISPLAY_ERR_INTERNAL -1
++#define KRUN_DISPLAY_ERR_METHOD_UNSUPPORTED -2
++#define KRUN_DISPLAY_ERR_INVALID_SCANOUT_ID -3
++#define KRUN_DISPLAY_ERR_INVALID_PARAM -4
++#define KRUN_DISPLAY_ERR_OUT_OF_BUFFERS -5
++
++// Same as VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM
++#define KRUN_DISPLAY_FORMAT_B8G8R8A8_UNORM 1
++// Same as VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM
++#define KRUN_DISPLAY_FORMAT_B8G8R8X8_UNORM 2
++// Same as VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM
++#define KRUN_DISPLAY_FORMAT_A8R8G8B8_UNORM 3
++// Same as VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM
++#define KRUN_DISPLAY_FORMAT_X8R8G8B8_UNORM 4
++// Same as VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM
++#define KRUN_DISPLAY_FORMAT_R8G8B8A8_UNORM 67
++// Same as VIRTIO_GPU_PIXEL_FORMAT_X8B8G8R8_UNORM
++#define KRUN_DISPLAY_FORMAT_X8B8G8R8_UNORM 68
++// Same as VIRTIO_GPU_PIXEL_FORMAT_A8B8G8R8_UNORM
++#define KRUN_DISPLAY_FORMAT_A8B8G8R8_UNORM 121
++// Same as VIRTIO_GPU_PIXEL_FORMAT_R8G8B8X8_UNORM
++#define KRUN_DISPLAY_FORMAT_R8G8B8X8_UNORM 134
++
++/**
++ * Indicates support for basic framebuffer operations.
++ * If supported, the implementation must provide `disable_scanout`, `configure_scanout`, `alloc_frame`,
++ * and `present_frame`.
++ */
++#define KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER 1
++
++/**
++ * Called to create a display instance.
++ *
++ * Arguments:
++ *  "instance"    - (Output) pointer to userdata which can be used to represents this/self argument.
++ *                  Implementation may set it to any value (even NULL)
++ *  "userdata"    - userdata specified in the `krun_display_backend` instance
++ *  "reserved"    - reserved/unused for now
++ *
++ * Returns:
++ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_display_create_fn)(void **instance, const void *userdata, const void *reserved);
++
++/**
++ * Called to destroy the display instance.
++ *
++ * Arguments:
++ *  "instance"    - userdata set by `krun_display_create`, represents this/self argument
++ *
++ * Returns:
++ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_display_destroy_fn)(void *instance);
++
++/**
++ * Configures or reconfigures a display scanout.
++ *
++ * Arguments:
++ *  "instance"       - userdata set by `krun_display_create`, represents this/self argument
++ *  "scanout_id"     - The identifier of the scanout to configure.
++ *  "display_width"  - The original width of the display in pixels.
++ *  "display_height" - The original height of the display in pixels.
++ *  "width"          - The width of the configured scanout in pixels.
++ *  "height"         - The height of the configured scanout in pixels.
++ *  "format"         - The pixel format for the scanout (see KRUN_DISPLAY_FORMAT_* constants).
++ *
++ * Returns:
++ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_display_configure_scanout_fn)(void *instance,
++    uint32_t scanout_id,
++    uint32_t display_width,
++    uint32_t display_height,
++    uint32_t width,
++    uint32_t height,
++    uint32_t format);
++
++/**
++ * Disables a display scanout.
++ *
++ * Arguments:
++ *  "instance"    - userdata set by `krun_display_create`, represents this/self argument
++ *  "scanout_id"  - The identifier of the scanout to disable.
++ *
++ * Returns:
++ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_display_disable_scanout_fn)(void *instance, uint32_t scanout_id);
++
++/**
++ * Allocates a new frame for a specified scanout.
++ * This function provides a direct pointer to the frame's buffer.
++ * The caller is responsible for writing pixel data into this buffer.
++ *
++ * Arguments:
++ *  "instance"    - userdata set by `krun_display_create`, represents this/self argument
++ *  "scanout_id"  - The identifier of the scanout for which to allocate the frame.
++ *  "buffer"      - (Output) A pointer to a pointer that will be set to the address
++ *                  of the allocated frame's memory. The memory pointed to
++ *                  by *buffer must be writable by the caller.
++ * "buffer_size"  -  (Output) The size of the allocated buffer. This is mostly a sanity check, because the size
++ *                   is already determined by krun_display_configure_scanout.
++ *
++ * Returns:
++ *  The "frame_id" of the allocated frame or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_display_alloc_frame_fn)(void *instance, uint32_t scanout_id, uint8_t **buffer, size_t *buffer_size);
++
++struct krun_rect {
++    uint32_t x;
++    uint32_t y;
++    uint32_t width;
++    uint32_t height;
++};
++
++/**
++ * Presents a previously allocated frame to the display.
++ * After this call, the `frame_id` is considered consumed or "deallocated"
++ * from the user's perspective. The user must call `krun_display_alloc_frame`
++ * again to obtain a new valid frame for the next rendering cycle.
++ * The content of the buffer associated with the `frame_id` should not be
++ * modified after this call.
++ *
++ * Arguments:
++ *  "instance"        - userdata set by `krun_display_create`, represents this/self argument
++ *  "scanout_id"      - The identifier of the scanout on which to present the frame.
++ *  "frame_id"        - The identifier of the frame to present, previously obtained from `krun_display_alloc_frame`.
++* "damage_area"       - (Optional) Optimization hint describing the area that has changed since the last call to
++ *                      present_frame. If NULL, the entire frame is assumed to be damaged.
++ *
++ * Returns:
++ * Zero on success or a negative error or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_display_present_frame_fn)(void *instance, uint32_t scanout_id, uint32_t frame_id, const struct krun_rect* damage_area);
++
++/**
++ * Defines the set of callbacks for a display implementation.
++ * This structure holds function pointers that a display backend implements to integrate with the libkrun.
++ *
++ * This is modeled as an object, an object instance is created using the `create` function and destroyed using `destroy`.
++ * It is possible for the `create` function to be null in this case, the pointer to the object instance will be null
++ * in the methods.
++ *
++ * The gpu device instantiates the display backend using the krun_display_create in a specific thread. All further calls
++ * to the display backend will be called from the same thread. Note that the display methods should not block for a long
++ * time otherwise this will negatively impact performance of the emulated GPU device.
++ *
++ * See krun_display_* function pointer typedef definitions for descriptions of individual methods.
++ * In the future more methods may be added, depending on which KRUN_DISPLAY_FEATURE_* flags are passed to
++ * krun_set_display_backend. The user of the library *MUST* zero initialize this struct to make all (future) unset
++ * fields NULL.
++ */
++struct krun_display_basic_framebuffer_vtable {
++    krun_display_destroy_fn             destroy; // (optional)
++    krun_display_disable_scanout_fn     disable_scanout; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
++    krun_display_configure_scanout_fn   configure_scanout; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
++    krun_display_alloc_frame_fn         alloc_frame; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
++    krun_display_present_frame_fn       present_frame; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
++};
++
++union krun_display_vtable {
++    struct krun_display_basic_framebuffer_vtable basic_framebuffer;
++};
++
++struct krun_display_backend {
++    uint64_t features;
++    void *create_userdata; // (optional)
++    krun_display_create_fn create; // (optional)
++    union krun_display_vtable vtable;
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _LIBKRUN_DISPLAY_H
+diff --git a/include/libkrun_input.h b/include/libkrun_input.h
+deleted file mode 120000
+index dd9d61c..0000000
+--- a/include/libkrun_input.h
++++ /dev/null
+@@ -1 +0,0 @@
+-../src/input/libkrun_input.h
+\ No newline at end of file
+diff --git a/include/libkrun_input.h b/include/libkrun_input.h
+new file mode 100644
+index 0000000..8154e05
+--- /dev/null
++++ b/include/libkrun_input.h
+@@ -0,0 +1,171 @@
++#ifndef _LIBKRUN_INPUT_H
++#define _LIBKRUN_INPUT_H
++
++#include <inttypes.h>
++#include <stddef.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// The input backend encountered an internal error
++#define KRUN_INPUT_ERR_INTERNAL -1
++#define KRUN_INPUT_ERR_EAGAIN -2
++#define KRUN_INPUT_ERR_METHOD_UNSUPPORTED -3
++#define KRUN_INPUT_ERR_INVALID_PARAM -4
++
++
++#define KRUN_INPUT_CONFIG_FEATURE_QUERY 1
++#define KRUN_INPUT_EVENT_PROVIDER_FEATURE_QUEUE 1
++
++/**
++ * Represents an input event similar to Linux input events.
++ * This structure is compatible with virtio input events.
++ */
++struct krun_input_event {
++    uint16_t type;  // Event type (EV_KEY, EV_REL, EV_ABS, etc.)
++    uint16_t code;  // Event code (key code, relative axis, etc.)
++    uint32_t value; // Event value
++};
++
++/**
++ * Called to create an input backend instance.
++ *
++ * Arguments:
++ *  "instance"    - (Output) pointer to userdata which can be used to represent this/self argument.
++ *                  Implementation may set it to any value (even NULL)
++ *  "userdata"    - userdata specified in the `krun_input_backend` instance
++ *  "reserved"    - reserved/unused for now (arguments passed from libkrun to user)
++ *
++ * Returns:
++ *  Zero on success or a negative error code (KRUN_INPUT_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_input_create_fn)(void **instance, const void *userdata, const void *reserved);
++
++/**
++ * Called to destroy the input backend instance.
++ *
++ * Arguments:
++ *  "instance"    - userdata set by `krun_input_create`, represents this/self argument
++ *
++ * Returns:
++ *  Zero on success or a negative error code (KRUN_INPUT_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_input_destroy_fn)(void *instance);
++
++/**
++ * Gets a file descriptor that becomes ready for reading when input events are available.
++ * The implementation should return an eventfd or similar file descriptor that can be used
++ * with epoll/poll/select to wait for input events.
++ *
++ * Arguments:
++ *  "instance"    - userdata set by `krun_input_create`, represents this/self argument
++ *
++ * Returns:
++ *  A valid file descriptor (>= 0) or a negative error code (KRUN_INPUT_ERR_*) otherwise.
++ */
++typedef int (*krun_input_get_ready_efd_fn)(void *instance);
++
++/**
++ * Fetches the next available input event from the backend.
++ * This function should not block. If no events are available, it should return 0.
++ *
++ * Arguments:
++ *  "instance"    - userdata set by `krun_input_create`, represents this/self argument
++ *  "out_event"   - (Output) pointer to where the event should be written
++ *
++ * Returns:
++ *  1 if an event was successfully retrieved and written to out_event
++ *  0 if no events are available
++ *  negative error code (KRUN_INPUT_ERR_*) on error
++ */
++typedef int32_t (*krun_input_next_event_fn)(void *instance, struct krun_input_event *out_event);
++
++struct krun_input_event_provider_vtable {
++    krun_input_destroy_fn         destroy;        // (optional)
++    krun_input_get_ready_efd_fn   get_ready_efd;  // (required)
++    krun_input_next_event_fn      next_event;     // (required)
++};
++
++/**
++ * Device IDs structure for input devices
++ */
++struct krun_input_device_ids {
++    uint16_t bustype;
++    uint16_t vendor;
++    uint16_t product;
++    uint16_t version;
++};
++
++/**
++ * Absolute axis information structure
++ */
++struct krun_input_absinfo {
++    uint32_t min;
++    uint32_t max;
++    uint32_t fuzz;
++    uint32_t flat;
++    uint32_t res;
++};
++
++/**
++ * Called to create an instance of an object
++ *
++ * Arguments:
++ *  "instance"    - (Output) pointer to userdata which can be used to represent this/self argument.
++ *  "userdata"    - userdata specified in the config object
++ *  "reserved"    - reserved/unused for now
++ *
++ * Returns:
++ *  Zero on success or a negative error code (KRUN_INPUT_ERR_*) otherwise.
++ */
++typedef int32_t (*krun_input_create_fn)(void **instance, const void *userdata, const void *reserved);
++
++/**
++ * Function pointer types for querying device configuration
++ */
++typedef int32_t (*krun_input_query_device_name_fn)(void *instance, uint8_t *name_buf, size_t name_buf_len);
++typedef int32_t (*krun_input_query_serial_name_fn)(void *instance, uint8_t *name_buf, size_t name_buf_len);
++typedef int32_t (*krun_input_query_device_ids_fn)(void *instance, struct krun_input_device_ids *ids);
++typedef int32_t (*krun_input_query_event_capabilities_fn)(void *instance, uint8_t event_type, uint8_t *bitmap_buf, size_t bitmap_buf_len);
++typedef int32_t (*krun_input_query_abs_info_fn)(void *instance, uint8_t abs_axis, struct krun_input_absinfo *abs_info);
++typedef int32_t (*krun_input_query_properties_fn)(void *instance, uint8_t *bitmap_buf, size_t bitmap_buf_len);
++
++/**
++ * Config vtable structure
++ */
++struct krun_input_config_vtable {
++    krun_input_destroy_fn                  destroy;
++    krun_input_query_device_name_fn        query_device_name;
++    krun_input_query_serial_name_fn        query_serial_name;
++    krun_input_query_device_ids_fn         query_device_ids;
++    krun_input_query_event_capabilities_fn query_event_capabilities;
++    krun_input_query_abs_info_fn           query_abs_info;
++    krun_input_query_properties_fn         query_properties;
++};
++
++/**
++ * Config object structure
++ */
++struct krun_input_config {
++    uint64_t features;
++    void *create_userdata; // (optional)
++    krun_input_create_fn create; // Creates the config object
++    struct krun_input_config_vtable vtable;
++};
++
++/**
++ * Events object structure
++ */
++struct krun_input_event_provider {
++    uint64_t features;
++    void *create_userdata; // (optional)
++    krun_input_create_fn create; // Creates the events object
++    struct krun_input_event_provider_vtable vtable;
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif // _LIBKRUN_INPUT_H
+diff --git a/src/devices/src/virtio/gpu/device.rs b/src/devices/src/virtio/gpu/device.rs
+index 04f619c..dc020f8 100644
+--- a/src/devices/src/virtio/gpu/device.rs
++++ b/src/devices/src/virtio/gpu/device.rs
+@@ -23,7 +23,6 @@ pub(crate) const AVAIL_FEATURES: u64 = (1u64 << uapi::VIRTIO_F_VERSION_1)
+     | (1u64 << uapi::VIRTIO_GPU_F_VIRGL)
+     | (1u64 << uapi::VIRTIO_GPU_F_EDID)
+     | (1u64 << uapi::VIRTIO_GPU_F_RESOURCE_UUID)
+-    | (1u64 << uapi::VIRTIO_GPU_F_RESOURCE_BLOB)
+     | (1u64 << uapi::VIRTIO_GPU_F_CONTEXT_INIT);
+ 
+ const QUEUE_SIZE: u16 = 256;
+diff --git a/src/devices/src/virtio/gpu/virtio_gpu.rs b/src/devices/src/virtio/gpu/virtio_gpu.rs
+index 43b4ef7..e71cbb5 100644
+--- a/src/devices/src/virtio/gpu/virtio_gpu.rs
++++ b/src/devices/src/virtio/gpu/virtio_gpu.rs
+@@ -493,23 +493,29 @@ impl VirtioGpu {
+         resource: VirtioGpuResource,
+         output: &mut [u8],
+     ) -> VirtioGpuResult {
++        let stride = resource.width * ResourceFormat::BYTES_PER_PIXEL as u32;
++        let max_h = output.len() as u32 / stride;
++        let h = resource.height.min(max_h);
++
+         let transfer = Transfer3D {
+             x: 0,
+             y: 0,
+             z: 0,
+             w: resource.width,
+-            h: resource.height,
++            h,
+             d: 1,
+             level: 0,
+-            stride: resource.width * ResourceFormat::BYTES_PER_PIXEL as u32,
++            stride,
+             layer_stride: 0,
+             offset: 0,
+         };
+ 
+-        rutabaga
++        if let Err(e) = rutabaga
+             .transfer_read(0, resource.id, transfer, Some(IoSliceMut::new(output)))
+-            .map_err(|e| format!("{e}"))
+-            .unwrap();
++        {
++            log::warn!("transfer_read failed for resource {}: {e}", resource.id);
++            return Err(ErrUnspec);
++        }
+ 
+         Ok(OkNoData)
+     }
+@@ -691,6 +697,14 @@ impl VirtioGpu {
+         Ok(OkNoData)
+     }
+ 
++    pub fn poll_renderer(&mut self) {
++        self.rutabaga.event_poll();
++    }
++
++    pub fn has_pending_fences(&self) -> bool {
++        !self.fence_state.lock().unwrap().descs.is_empty()
++    }
++
+     pub fn process_fence(
+         &mut self,
+         ring: VirtioGpuRing,
+diff --git a/src/devices/src/virtio/gpu/worker.rs b/src/devices/src/virtio/gpu/worker.rs
+index e00186c..2cad074 100644
+--- a/src/devices/src/virtio/gpu/worker.rs
++++ b/src/devices/src/virtio/gpu/worker.rs
+@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
+ use std::thread;
+ 
+ use nix::fcntl::{fcntl, FcntlArg, OFlag};
++use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+ use utils::eventfd::EventFd;
+ 
+ #[cfg(target_os = "macos")]
+@@ -99,13 +100,42 @@ impl Worker {
+             self.displays.clone(),
+             self.display_backend,
+         );
+-
+         loop {
+-            if let Err(e) = self.control_evt.read() {
+-                error!("Failed to read control_evt: {e:?}");
+-                continue;
++            let has_pending_fences = virtio_gpu.has_pending_fences();
++            let control_ready = if has_pending_fences {
++                let fd = unsafe { BorrowedFd::borrow_raw(self.control_evt.as_raw_fd()) };
++                let mut poll_fds = [PollFd::new(fd, PollFlags::POLLIN)];
++                match poll(&mut poll_fds, PollTimeout::from(10u16)) {
++                    Ok(0) => false,
++                    Ok(_) => poll_fds[0]
++                        .revents()
++                        .unwrap_or_else(PollFlags::empty)
++                        .intersects(PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR),
++                    Err(e) => {
++                        error!("Failed to poll control_evt: {e:?}");
++                        false
++                    }
++                }
++            } else {
++                if let Err(e) = self.control_evt.read() {
++                    error!("Failed to read control_evt: {e:?}");
++                    continue;
++                }
++                true
++            };
++
++            if has_pending_fences {
++                virtio_gpu.poll_renderer();
+             }
+-            if self.process_queue(&mut virtio_gpu, &self.control_queue.clone()) {
++
++            if control_ready && has_pending_fences {
++                if let Err(e) = self.control_evt.read() {
++                    error!("Failed to read ready control_evt: {e:?}");
++                    continue;
++                }
++            }
++
++            if control_ready && self.process_queue(&mut virtio_gpu, &self.control_queue.clone()) {
+                 if let Err(e) = self.interrupt.try_signal_used_queue() {
+                     error!("Error signaling queue: {e:?}");
+                 }
+@@ -145,12 +175,14 @@ impl Worker {
+                 virtio_gpu.resource_create_3d(resource_id, resource_create_3d)
+             }
+             GpuCommand::ResourceUnref(info) => virtio_gpu.unref_resource(info.resource_id),
+-            GpuCommand::SetScanout(info) => virtio_gpu.set_scanout(
+-                info.scanout_id,
+-                info.resource_id,
+-                info.r.width,
+-                info.r.height,
+-            ),
++            GpuCommand::SetScanout(info) => {
++                virtio_gpu.set_scanout(
++                    info.scanout_id,
++                    info.resource_id,
++                    info.r.width,
++                    info.r.height,
++                )
++            }
+             GpuCommand::ResourceFlush(info) => {
+                 let rect = Rect {
+                     x: info.r.x,
+diff --git a/src/devices/src/virtio/input/device.rs b/src/devices/src/virtio/input/device.rs
+index c62a1c6..8e5082e 100644
+--- a/src/devices/src/virtio/input/device.rs
++++ b/src/devices/src/virtio/input/device.rs
+@@ -78,7 +78,7 @@ impl InputConfig {
+             }
+             config_select::VIRTIO_INPUT_CFG_ABS_INFO => cfg
+                 .query_abs_info(subsel, unsafe { &mut self.repr.payload.abs })
+-                .map(|_| size_of::<InputDeviceIds>() as u8),
++                .map(|_| size_of::<InputAbsInfo>() as u8),
+             select => {
+                 error!("Invalid config selection select = {select}");
+                 self.invalidate();
+diff --git a/src/rutabaga_gfx/src/generated/generate b/src/rutabaga_gfx/src/generated/generate
+deleted file mode 120000
+index d4bb1f1..0000000
+--- a/src/rutabaga_gfx/src/generated/generate
++++ /dev/null
+@@ -1 +0,0 @@
+-generate.py
+\ No newline at end of file
+diff --git a/src/rutabaga_gfx/src/generated/generate b/src/rutabaga_gfx/src/generated/generate
+new file mode 100755
+index 0000000..457f11c
+--- /dev/null
++++ b/src/rutabaga_gfx/src/generated/generate
+@@ -0,0 +1,180 @@
++#!/usr/bin/env python3
++# Copyright 2018 The ChromiumOS Authors
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++"""Generates bindings that are used gpu_renderer.
++
++A sysroot and virglrenderer source checkout is required. The defaults to the
++root directory.
++"""
++
++from __future__ import print_function
++import argparse
++import multiprocessing.pool
++import os
++import subprocess
++import sys
++import tempfile
++
++# Bright green.
++PASS_COLOR = "\033[1;32m"
++# Bright red.
++FAIL_COLOR = "\033[1;31m"
++# Default color.
++END_COLOR = "\033[0m"
++
++verbose = False
++
++
++def generate_module(
++    module_name, allowlist, blocklist, header, clang_args, lib_name, derive_default
++):
++    args = [
++        "bindgen",
++        "--no-layout-tests",
++        "--allowlist-function",
++        allowlist,
++        "--allowlist-var",
++        allowlist,
++        "--allowlist-type",
++        allowlist,
++        "--blocklist-function",
++        blocklist,
++        "--blocklist-item",
++        blocklist,
++        "--blocklist-type",
++        blocklist,
++        "--no-prepend-enum-name",
++        "-o",
++        module_name + "_bindings.rs",
++    ]
++
++    if lib_name:
++        args.extend(["--raw-line", '#[cfg(feature = "{}")]'.format(module_name)])
++        args.extend(["--raw-line", '#[link(name = "{}")] extern {{}}'.format(lib_name)])
++
++    if derive_default:
++        args.append("--with-derive-default")
++
++    args.extend([header, "--"])
++    args.extend(clang_args)
++
++    if verbose:
++        print(" ".join(args))
++
++    if subprocess.Popen(args).wait() == 0:
++        return "pass"
++    else:
++        return "bindgen failed"
++
++
++def download_virgl(src, dst, branch):
++    virgl_src = tempfile.TemporaryDirectory(prefix="virglrenderer-src")
++
++    args = ["git", "clone"]
++
++    if branch:
++        args.extend(["-b", branch])
++
++    args.extend([src, dst])
++
++    if verbose:
++        print(" ".join(args))
++
++    if subprocess.Popen(args).wait() == 0:
++        return True
++    else:
++        return False
++
++
++def get_parser():
++    """Gets the argument parser"""
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--sysroot", default="/", help="sysroot directory (default=%(default)s)")
++    parser.add_argument("--virglrenderer", help="virglrenderer src dir/repo (default=%(default)s)")
++    parser.add_argument(
++        "--virgl_branch",
++        default="master",
++        help="virglrenderer branch name (default=%(default)s)",
++    )
++    parser.add_argument(
++        "--verbose",
++        "-v",
++        action="store_true",
++        help="enable verbose output (default=%(default)s)",
++    )
++    return parser
++
++
++def main(argv):
++    global verbose
++    os.chdir(os.path.dirname(sys.argv[0]))
++    opts = get_parser().parse_args(argv)
++    if opts.verbose:
++        verbose = True
++
++    if opts.virglrenderer:
++        if "://" in opts.virglrenderer:
++            virgl_src_dir_temp = tempfile.TemporaryDirectory(prefix="virglrenderer-src")
++            virgl_src_dir = virgl_src_dir_temp.name
++            if not download_virgl(opts.virglrenderer, virgl_src_dir, opts.virgl_branch):
++                print("failed to clone '{}' to '{}'".format(virgl_src_dir, opts.virgl_branch))
++                sys.exit(1)
++        else:
++            virgl_src_dir = opts.virglrenderer
++
++        header = os.path.join(virgl_src_dir, "src/virglrenderer.h")
++    else:
++        header = os.path.join(opts.sysroot, "usr/include/virgl/virglrenderer.h")
++
++    clang_args = [
++        "-I",
++        os.path.join(opts.sysroot, "usr/include"),
++        "-D",
++        "VIRGL_RENDERER_UNSTABLE_APIS",
++    ]
++
++    modules = (
++        (
++            "virgl_renderer",
++            "(virgl|VIRGL)_.+",  # allowlist
++            ".*(va_list|debug_callback).*",  # blocklist
++            header,
++            clang_args,
++            "virglrenderer",
++            True,
++        ),
++    )
++
++    pool = multiprocessing.pool.Pool(len(modules))
++    results = pool.starmap(generate_module, modules, 1)
++
++    return_fail = False
++    print("---")
++    print("generate module summary:")
++    for module, result in zip(modules, results):
++        result_color = FAIL_COLOR
++        if result == "pass":
++            result_color = PASS_COLOR
++        else:
++            return_fail = True
++
++        print("%15s: %s%s%s" % (module[0], result_color, result, END_COLOR))
++
++    if return_fail:
++        sys.exit(1)
++
++    with open("mod.rs", "w") as f:
++        print("/* generated by generate.py */", file=f)
++        print("#![allow(dead_code)]", file=f)
++        print("#![allow(non_camel_case_types)]", file=f)
++        print("#![allow(non_snake_case)]", file=f)
++        print("#![allow(non_upper_case_globals)]", file=f)
++        print("pub mod virgl_debug_callback_bindings;", file=f)
++        for module in modules:
++            print("pub mod", module[0] + "_bindings;", file=f)
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv[1:]))
+diff --git a/src/rutabaga_gfx/src/generated/virgl_renderer_bindings.rs b/src/rutabaga_gfx/src/generated/virgl_renderer_bindings.rs
+index 970e500..527fe17 100644
+--- a/src/rutabaga_gfx/src/generated/virgl_renderer_bindings.rs
++++ b/src/rutabaga_gfx/src/generated/virgl_renderer_bindings.rs
+@@ -397,13 +397,6 @@ extern "C" {
+         map_info: *mut u32,
+     ) -> ::std::os::raw::c_int;
+ }
+-#[cfg(target_os = "macos")]
+-extern "C" {
+-    pub fn virgl_renderer_resource_get_map_ptr(
+-        res_handle: u32,
+-        map_ptr: *mut u64,
+-    ) -> ::std::os::raw::c_int;
+-}
+ extern "C" {
+     pub fn virgl_renderer_resource_export_blob(
+         res_id: u32,
+diff --git a/src/rutabaga_gfx/src/virgl_renderer.rs b/src/rutabaga_gfx/src/virgl_renderer.rs
+index a2627ca..2b356ac 100644
+--- a/src/rutabaga_gfx/src/virgl_renderer.rs
++++ b/src/rutabaga_gfx/src/virgl_renderer.rs
+@@ -360,11 +360,12 @@ impl VirglRenderer {
+ 
+     #[cfg(target_os = "macos")]
+     fn map_ptr(&self, resource_id: u32) -> RutabagaResult<u64> {
+-        let mut map_ptr = 0;
+-        let ret = unsafe { virgl_renderer_resource_get_map_ptr(resource_id, &mut map_ptr) };
++        let mut map: *mut std::ffi::c_void = std::ptr::null_mut();
++        let mut size: u64 = 0;
++        let ret = unsafe { virgl_renderer_resource_map(resource_id, &mut map, &mut size) };
+         ret_to_res(ret)?;
+ 
+-        Ok(map_ptr)
++        Ok(map as u64)
+     }
+ 
+     fn query(&self, resource_id: u32) -> RutabagaResult<Resource3DInfo> {

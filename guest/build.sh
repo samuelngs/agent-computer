@@ -7,7 +7,7 @@ ARCH="${1:-aarch64}"
 DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-http://deb.debian.org/debian}"
 DISK_SIZE_MB="${DISK_SIZE_MB:-4096}"
-AGENTOS_BROWSERD="${AGENTOS_BROWSERD:-1}"
+APC_BROWSERD="${APC_BROWSERD:-1}"
 
 case "$ARCH" in
     aarch64|arm64)
@@ -30,9 +30,9 @@ esac
 DEBIAN_IMAGE="${DEBIAN_IMAGE:-$DEBIAN_IMAGE_DEFAULT}"
 
 OUT_DIR="$SCRIPT_DIR/out/$ARCH"
-COMPOSITOR_BIN="$OUT_DIR/agentos-compositor"
-FUSE_BIN="$OUT_DIR/agentos-fuse"
-BROWSERD_RUNTIME_DIR="$WORKSPACE_DIR/agentos-browserd/out/$ARCH"
+COMPOSITOR_BIN="$OUT_DIR/apc-compositor"
+FUSE_BIN="$OUT_DIR/apc-fuse"
+BROWSERD_RUNTIME_DIR="$WORKSPACE_DIR/apc-browserd/out/$ARCH"
 
 if [ ! -x "$COMPOSITOR_BIN" ]; then
     echo "ERROR: missing required compositor binary: $COMPOSITOR_BIN"
@@ -47,10 +47,10 @@ if [ ! -x "$FUSE_BIN" ]; then
 fi
 
 BROWSERD_DOCKER_ARGS=()
-if [ "$AGENTOS_BROWSERD" = "1" ]; then
+if [ "$APC_BROWSERD" = "1" ]; then
     if [ ! -x "$BROWSERD_RUNTIME_DIR/browserd" ]; then
         echo "ERROR: missing required browserd runtime: $BROWSERD_RUNTIME_DIR/browserd"
-        echo "Run ./agentos-browserd/scripts/build.sh $ARCH first."
+        echo "Run ./apc-browserd/scripts/build.sh $ARCH first."
         exit 1
     fi
     BROWSERD_DOCKER_ARGS=(-v "$BROWSERD_RUNTIME_DIR:/browserd-runtime:ro")
@@ -58,11 +58,11 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-echo "==> Building AgentOS Debian guest image"
+echo "==> Building APC Debian guest image"
 echo "    arch:   $ARCH ($DEBIAN_ARCH)"
 echo "    suite:  $DEBIAN_SUITE"
 echo "    image:  $DEBIAN_IMAGE"
-echo "    browserd: $AGENTOS_BROWSERD"
+echo "    browserd: $APC_BROWSERD"
 echo "    output: $OUT_DIR/{vmlinuz,initramfs,disk.img}"
 
 BUILD_SCRIPT=$(mktemp)
@@ -159,7 +159,7 @@ apt-get install -y --no-install-recommends \
     gzip
 
 echo "--- Validating Debian runtime package set ---"
-apt-get install -s --no-install-recommends "${RUNTIME_PACKAGES[@]}" >/tmp/agentos-apt-sim.log
+apt-get install -s --no-install-recommends "${RUNTIME_PACKAGES[@]}" >/tmp/apc-apt-sim.log
 
 echo "--- Creating Debian rootfs ---"
 rm -rf /rootfs
@@ -172,22 +172,22 @@ debootstrap \
     /rootfs \
     "$DEBIAN_MIRROR"
 
-echo "--- Copying AgentOS overlay and binaries ---"
+echo "--- Copying APC overlay and binaries ---"
 cp -a /overlay/. /rootfs/
-install -m 0755 /output/agentos-compositor /rootfs/usr/local/bin/agentos-compositor
-install -m 0755 /output/agentos-fuse /rootfs/usr/local/bin/agentos-fuse
+install -m 0755 /output/apc-compositor /rootfs/usr/local/bin/apc-compositor
+install -m 0755 /output/apc-fuse /rootfs/usr/local/bin/apc-fuse
 chmod 0755 /rootfs/usr/local/bin/start-compositor
 if [ "$BROWSERD_ENABLED" = "1" ]; then
-    mkdir -p /rootfs/opt/agentos-browserd
-    cp -a /browserd-runtime/. /rootfs/opt/agentos-browserd/
-    chmod 0755 /rootfs/opt/agentos-browserd/browserd
+    mkdir -p /rootfs/opt/apc-browserd
+    cp -a /browserd-runtime/. /rootfs/opt/apc-browserd/
+    chmod 0755 /rootfs/opt/apc-browserd/browserd
 fi
 
 echo "--- Configuring Debian rootfs ---"
-echo "agentos" > /rootfs/etc/hostname
+echo "apc" > /rootfs/etc/hostname
 cat > /rootfs/etc/hosts << 'EOF'
 127.0.0.1 localhost
-127.0.1.1 agentos
+127.0.1.1 apc
 ::1 localhost ip6-localhost ip6-loopback
 ff02::1 ip6-allnodes
 ff02::2 ip6-allrouters
@@ -224,7 +224,7 @@ nameserver 10.0.2.3
 nameserver 1.1.1.1
 EOF
 
-chroot /rootfs /usr/sbin/groupadd -g 1000 agentos
+chroot /rootfs /usr/sbin/groupadd -g 1000 agent
 for group in video input render seat fuse; do
     chroot /rootfs /usr/bin/getent group "$group" >/dev/null || chroot /rootfs /usr/sbin/groupadd "$group"
 done
@@ -232,20 +232,20 @@ chroot /rootfs /usr/sbin/useradd \
     --uid 1000 \
     --gid 1000 \
     --create-home \
-    --home-dir /home/agentos \
+    --home-dir /home/agent \
     --shell /bin/bash \
     --groups sudo,video,input,render,seat,fuse \
-    agentos
-echo "agentos:agentos" | chroot /rootfs /usr/sbin/chpasswd
+    agent
+echo "agent:agent" | chroot /rootfs /usr/sbin/chpasswd
 mkdir -p /rootfs/etc/sudoers.d
-echo "agentos ALL=(ALL) NOPASSWD: ALL" > /rootfs/etc/sudoers.d/agentos
-chmod 0440 /rootfs/etc/sudoers.d/agentos
+echo "agent ALL=(ALL) NOPASSWD: ALL" > /rootfs/etc/sudoers.d/agent
+chmod 0440 /rootfs/etc/sudoers.d/agent
 
-mkdir -p /rootfs/home/agentos /rootfs/mnt/shared /rootfs/run/user/1000 /rootfs/tmp /rootfs/dev/shm
+mkdir -p /rootfs/home/agent /rootfs/mnt/shared /rootfs/run/user/1000 /rootfs/tmp /rootfs/dev/shm
 if [ "$BROWSERD_ENABLED" = "1" ]; then
-    mkdir -p /rootfs/home/agentos/.config/agentos-browserd
+    mkdir -p /rootfs/home/agent/.config/apc-browserd
 fi
-chown -R 1000:1000 /rootfs/home/agentos /rootfs/mnt/shared /rootfs/run/user/1000
+chown -R 1000:1000 /rootfs/home/agent /rootfs/mnt/shared /rootfs/run/user/1000
 chmod 0700 /rootfs/run/user/1000
 chmod 1777 /rootfs/tmp /rootfs/dev/shm
 
@@ -269,7 +269,7 @@ chown 1000:1000 /run/user/1000 2>/dev/null || true
 chmod 0700 /run/user/1000 2>/dev/null || true
 kmsg "fast-init: mounts done"
 
-hostname agentos 2>/dev/null || true
+hostname apc 2>/dev/null || true
 echo "0 65534" > /proc/sys/net/ipv4/ping_group_range 2>/dev/null || true
 ln -sf /proc/mounts /etc/mtab 2>/dev/null || true
 
@@ -306,7 +306,7 @@ start_udevd() {
 
     : > /tmp/udevd.log
     "$UDEVD" >>/tmp/udevd.log 2>&1 &
-    echo "$!" > /run/udev/agentos-udevd.pid
+    echo "$!" > /run/udev/apc-udevd.pid
     for _ in $(seq 1 300); do
         if udevadm control --ping >/dev/null 2>&1; then
             return 0
@@ -335,14 +335,14 @@ else
     fi
 fi
 
-agentos_trigger_udev_input() {
+apc_trigger_udev_input() {
     udevadm trigger --action=add --subsystem-match=input 2>/dev/null || true
     udevadm trigger --action=change --subsystem-match=input 2>/dev/null || true
     udevadm settle --timeout=10 2>/dev/null || true
 }
 
 udevadm trigger --action=add 2>/dev/null || true
-agentos_trigger_udev_input
+apc_trigger_udev_input
 kmsg "fast-init: udev settle complete"
 
 if [ -e /sys/class/misc/fuse/dev ] && [ ! -e /dev/fuse ]; then
@@ -352,7 +352,7 @@ if [ -e /sys/class/misc/fuse/dev ] && [ ! -e /dev/fuse ]; then
     mknod /dev/fuse c "$major" "$minor" 2>/dev/null || true
 fi
 if [ -e /dev/fuse ]; then
-    chgrp fuse /dev/fuse 2>/dev/null || chgrp agentos /dev/fuse 2>/dev/null || true
+    chgrp fuse /dev/fuse 2>/dev/null || chgrp agent /dev/fuse 2>/dev/null || true
     chmod 660 /dev/fuse 2>/dev/null || true
     kmsg "fast-init: FUSE ready"
 else
@@ -400,17 +400,17 @@ chgrp input /dev/input/event* 2>/dev/null || true
 chmod 660 /dev/input/event* 2>/dev/null || true
 kmsg "fast-init: input devices ($(ls /dev/input 2>/dev/null | tr '\n' ' '))"
 
-agentos_input_rules_needed() {
+apc_input_rules_needed() {
     for dev in /dev/input/event*; do
         [ -e "$dev" ] || continue
         event_name="$(basename "$dev")"
         device_name="$(cat "/sys/class/input/$event_name/device/name" 2>/dev/null || true)"
         props="$(udevadm info -q property -n "$dev" 2>/dev/null || true)"
         case "$device_name" in
-            "AgentOS Virtual Keyboard")
+            "APC Virtual Keyboard")
                 echo "$props" | grep -qx 'ID_INPUT_KEYBOARD=1' || return 0
                 ;;
-            "AgentOS Virtual Pointer")
+            "APC Virtual Pointer")
                 echo "$props" | grep -qx 'ID_INPUT_MOUSE=1' || return 0
                 ;;
         esac
@@ -418,15 +418,15 @@ agentos_input_rules_needed() {
     return 1
 }
 
-if agentos_input_rules_needed; then
+if apc_input_rules_needed; then
     mkdir -p /run/udev/rules.d
-    cat > /run/udev/rules.d/90-agentos-input.rules << 'UDEVRULES'
-ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event[0-9]*", ATTRS{name}=="AgentOS Virtual Keyboard", ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", ENV{ID_SEAT}="seat0"
-ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event[0-9]*", ATTRS{name}=="AgentOS Virtual Pointer", ENV{ID_INPUT}="1", ENV{ID_INPUT_MOUSE}="1", ENV{ID_SEAT}="seat0"
+    cat > /run/udev/rules.d/90-apc-input.rules << 'UDEVRULES'
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event[0-9]*", ATTRS{name}=="APC Virtual Keyboard", ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", ENV{ID_SEAT}="seat0"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event[0-9]*", ATTRS{name}=="APC Virtual Pointer", ENV{ID_INPUT}="1", ENV{ID_INPUT_MOUSE}="1", ENV{ID_SEAT}="seat0"
 UDEVRULES
     udevadm control --reload 2>/dev/null || true
-    agentos_trigger_udev_input
-    kmsg "fast-init: applied AgentOS input udev fallback rules"
+    apc_trigger_udev_input
+    kmsg "fast-init: applied APC input udev fallback rules"
 else
     kmsg "fast-init: native udev input classification present"
 fi
@@ -493,7 +493,7 @@ FASTINIT
 chmod 0755 /rootfs/sbin/fast-init
 ln -sf fast-init /rootfs/sbin/init
 
-echo "--- Building AgentOS initramfs ---"
+echo "--- Building APC initramfs ---"
 INITRAMFS_DIR="$(mktemp -d)"
 mkdir -p "$INITRAMFS_DIR/bin" "$INITRAMFS_DIR/dev" "$INITRAMFS_DIR/newroot" "$INITRAMFS_DIR/proc" "$INITRAMFS_DIR/sys"
 if [ -x /rootfs/bin/busybox ]; then
@@ -538,7 +538,7 @@ echo "    initramfs: $(du -h /output/initramfs | cut -f1)"
 echo "--- Creating ext4 disk image (${DISK_SIZE_MB}MB) ---"
 rm -f /output/disk.img
 truncate -s "${DISK_SIZE_MB}M" /output/disk.img
-mke2fs -q -F -t ext4 -L agentos -d /rootfs /output/disk.img
+mke2fs -q -F -t ext4 -L apc -d /rootfs /output/disk.img
 
 echo "--- Debian rootfs build complete ---"
 ls -lh /output/
@@ -551,7 +551,7 @@ docker run --rm \
     -v "$BUILD_SCRIPT:/build.sh:ro" \
     "${BROWSERD_DOCKER_ARGS[@]}" \
     "$DEBIAN_IMAGE" \
-    bash /build.sh "$DISK_SIZE_MB" "$DEBIAN_SUITE" "$DEBIAN_ARCH" "$DEBIAN_MIRROR" "$AGENTOS_BROWSERD"
+    bash /build.sh "$DISK_SIZE_MB" "$DEBIAN_SUITE" "$DEBIAN_ARCH" "$DEBIAN_MIRROR" "$APC_BROWSERD"
 
 rm -f "$BUILD_SCRIPT"
 
@@ -580,7 +580,7 @@ echo "    Initramfs: $OUT_DIR/initramfs"
 echo "    Disk:      $OUT_DIR/disk.img"
 echo ""
 echo "    Run with:"
-echo "    cargo run -p agentos-host -- \\"
+echo "    cargo run -p apc-host -- \\"
 echo "      --kernel $OUT_DIR/vmlinuz \\"
 echo "      --initrd $OUT_DIR/initramfs \\"
 echo "      --disk $OUT_DIR/disk.img"

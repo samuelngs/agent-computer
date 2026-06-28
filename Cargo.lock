@@ -9,71 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agentos-compositor"
-version = "0.1.0"
-dependencies = [
- "agentos-protocol",
- "anyhow",
- "base64",
- "calloop",
- "drm",
- "drm-fourcc",
- "fontdue",
- "libc",
- "png",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "smithay",
- "tracing",
- "tracing-subscriber",
- "xcursor",
-]
-
-[[package]]
-name = "agentos-fuse"
-version = "0.1.0"
-dependencies = [
- "agentos-protocol",
- "anyhow",
- "base64",
- "clap",
- "fuser",
- "libc",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "agentos-host"
-version = "0.1.0"
-dependencies = [
- "agentos-protocol",
- "anyhow",
- "base64",
- "block2",
- "clap",
- "libc",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-quartz-core",
- "png",
- "serde",
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "agentos-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -134,6 +69,71 @@ name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+
+[[package]]
+name = "apc-compositor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "apc-protocol",
+ "base64",
+ "calloop",
+ "drm",
+ "drm-fourcc",
+ "fontdue",
+ "libc",
+ "png",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "smithay",
+ "tracing",
+ "tracing-subscriber",
+ "xcursor",
+]
+
+[[package]]
+name = "apc-fuse"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "apc-protocol",
+ "base64",
+ "clap",
+ "fuser",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apc-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "apc-protocol",
+ "base64",
+ "block2",
+ "clap",
+ "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-quartz-core",
+ "png",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "apc-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "appendlist"

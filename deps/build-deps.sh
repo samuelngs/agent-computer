@@ -13,7 +13,7 @@ export DYLD_LIBRARY_PATH="$PREFIX/lib:${DYLD_LIBRARY_PATH:-}"
 export CFLAGS="-I$PREFIX/include ${CFLAGS:-}"
 export LDFLAGS="-L$PREFIX/lib ${LDFLAGS:-}"
 
-echo "==> Building AgentOS dependencies"
+echo "==> Building APC dependencies"
 echo "    prefix: $PREFIX"
 echo "    jobs: $JOBS"
 echo ""
@@ -191,6 +191,16 @@ build_libkrun() {
         git clone --depth 1 https://github.com/containers/libkrun.git
     fi
     cd libkrun
+
+    local libkrun_patch="$SCRIPT_DIR/patches/libkrun/macos-virgl-fence-poll.patch"
+    if [ -f "$libkrun_patch" ]; then
+        if git apply --reverse --check "$libkrun_patch" >/dev/null 2>&1; then
+            echo "    libkrun macOS virgl patch already applied"
+        else
+            echo "    Applying libkrun macOS virgl patch"
+            git apply "$libkrun_patch"
+        fi
+    fi
 
     # Build with GPU + input + net support, linking against our custom virglrenderer
     make GPU=1 BLK=1 INPUT=1 NET=1 \

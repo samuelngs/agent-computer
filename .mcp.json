@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "agentos": {
+    "apc": {
       "type": "stdio",
-      "command": "target/release/agentos-host",
+      "command": "target/release/apc-host",
       "args": [
         "--kernel", "guest/out/aarch64/vmlinuz",
         "--initrd", "guest/out/aarch64/initramfs",

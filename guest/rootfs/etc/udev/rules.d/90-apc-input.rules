@@ -1,0 +1,2 @@
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event[0-9]*", ATTRS{name}=="APC Virtual Keyboard", ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1", ENV{ID_SEAT}="seat0"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event[0-9]*", ATTRS{name}=="APC Virtual Pointer", ENV{ID_INPUT}="1", ENV{ID_INPUT_MOUSE}="1", ENV{ID_SEAT}="seat0"

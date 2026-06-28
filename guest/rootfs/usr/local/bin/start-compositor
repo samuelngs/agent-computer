@@ -16,38 +16,38 @@ if [ ! -e /dev/dri/card0 ]; then
     exit 1
 fi
 
-AGENTOS_UID="$(id -u agentos 2>/dev/null || echo 1000)"
-AGENTOS_GID="$(id -g agentos 2>/dev/null || echo 1000)"
-XDG_RUNTIME_DIR="/run/user/$AGENTOS_UID"
+APC_UID="$(id -u agent 2>/dev/null || echo 1000)"
+APC_GID="$(id -g agent 2>/dev/null || echo 1000)"
+XDG_RUNTIME_DIR="/run/user/$APC_UID"
 mkdir -p "$XDG_RUNTIME_DIR"
-chown "$AGENTOS_UID:$AGENTOS_GID" "$XDG_RUNTIME_DIR"
+chown "$APC_UID:$APC_GID" "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
 
-AGENTOS_SCALE="$(sed -n 's/.*agentos\.scale=\([0-9][0-9]*\).*/\1/p' /proc/cmdline 2>/dev/null)"
-AGENTOS_SCALE="${AGENTOS_SCALE:-2}"
-XCURSOR_SIZE="$((24 * AGENTOS_SCALE))"
+APC_SCALE="$(sed -n 's/.*apc\.scale=\([0-9][0-9]*\).*/\1/p' /proc/cmdline 2>/dev/null)"
+APC_SCALE="${APC_SCALE:-2}"
+XCURSOR_SIZE="$((24 * APC_SCALE))"
 DEBUG_SKIP_CLIENT_SURFACES=
-if grep -qw 'agentos.skip_client_surfaces=1' /proc/cmdline 2>/dev/null; then
-    DEBUG_SKIP_CLIENT_SURFACES=AGENTOS_DEBUG_SKIP_CLIENT_SURFACES=1
+if grep -qw 'apc.skip_client_surfaces=1' /proc/cmdline 2>/dev/null; then
+    DEBUG_SKIP_CLIENT_SURFACES=APC_DEBUG_SKIP_CLIENT_SURFACES=1
 fi
 
-if [ ! -x /usr/local/bin/agentos-compositor ]; then
-    kmsg "start-compositor: agentos-compositor not found"
+if [ ! -x /usr/local/bin/apc-compositor ]; then
+    kmsg "start-compositor: apc-compositor not found"
     exit 1
 fi
 
-kmsg "start-compositor: launching agentos-compositor (scale=$AGENTOS_SCALE)"
-LOG=/tmp/agentos-compositor.log
+kmsg "start-compositor: launching apc-compositor (scale=$APC_SCALE)"
+LOG=/tmp/apc-compositor.log
 : > "$LOG"
-chown "$AGENTOS_UID:$AGENTOS_GID" "$LOG" 2>/dev/null || true
+chown "$APC_UID:$APC_GID" "$LOG" 2>/dev/null || true
 
 setpriv \
-    --reuid "$AGENTOS_UID" \
-    --regid "$AGENTOS_GID" \
+    --reuid "$APC_UID" \
+    --regid "$APC_GID" \
     --init-groups \
     env \
     PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
-    HOME=/home/agentos \
+    HOME=/home/agent \
     XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
     WLR_BACKENDS=drm \
     WLR_RENDERER=gles2 \
@@ -55,13 +55,13 @@ setpriv \
     SMITHAY_USE_LEGACY=1 \
     XCURSOR_THEME=Adwaita \
     XCURSOR_SIZE="$XCURSOR_SIZE" \
-    AGENTOS_SCALE="$AGENTOS_SCALE" \
-    AGENTOS_HOST_CURSOR=1 \
-    AGENTOS_INPUT_DEBUG=1 \
+    APC_SCALE="$APC_SCALE" \
+    APC_HOST_CURSOR=1 \
+    APC_INPUT_DEBUG=1 \
     $DEBUG_SKIP_CLIENT_SURFACES \
     RUST_BACKTRACE=1 \
     RUST_LOG=info \
-    /usr/local/bin/agentos-compositor > "$LOG" 2>&1 &
+    /usr/local/bin/apc-compositor > "$LOG" 2>&1 &
 COMPOSITOR_PID=$!
 
 (
